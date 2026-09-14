@@ -11,6 +11,7 @@
 import Image from "next/image";
 import logoMark from "@/public/images/logo-mark.png";
 import logoFull from "@/public/images/logo-full.png";
+import logoFullDark from "@/public/images/logo-full-dark.png";
 import { cx } from "./styles";
 import {
   AlertTriangle,
@@ -213,10 +214,11 @@ export function Icon({
  *
  * Both come from the supplied logo (`public/images/logo.svg`, a PNG lockup):
  * `logo-mark.png` is the "g" and its sparkles, `logo-full.png` the whole
- * thing, both on transparency. The wordmark is navy, so the lockup is for
- * light surfaces; on dark chrome use `BrandLogo` on a white pill, or
- * `BrandMark tone="inverse"`, which puts the mark on a white tile.
- * `app/icon.png` (the favicon) is the same mark.
+ * thing, both on transparency. The wordmark is navy and the face is a
+ * cut-out, so `logo-full-dark.png` (same lockup, wordmark in light ink, face
+ * filled) is the dark-theme copy and `BrandLogo` swaps between them. On
+ * dark chrome use `BrandMark tone="inverse"`, which puts the mark on a white
+ * tile. `app/icon.png` (the favicon) is the same mark.
  */
 export function BrandMark({ className = "size-8", tone = "ink" }: { className?: string; tone?: "ink" | "inverse" }) {
   const image = <Image src={logoMark} alt="Accountant Genie" className={cx("object-contain", tone === "inverse" ? "size-full" : cx("shrink-0", className))} priority />;
@@ -228,7 +230,15 @@ export function BrandMark({ className = "size-8", tone = "ink" }: { className?: 
   );
 }
 
-/** The full logo, for light surfaces. Size it by height. */
+/**
+ * The full logo. Size it by height. The wordmark is navy, so the dark theme
+ * swaps in `logo-full-dark.png`, the same lockup with the wordmark in light ink.
+ */
 export function BrandLogo({ className = "h-8" }: { className?: string }) {
-  return <Image src={logoFull} alt="Accountant Genie" className={cx("w-auto shrink-0 object-contain", className)} priority />;
+  return (
+    <span className={cx("inline-flex shrink-0 items-center", className)}>
+      <Image src={logoFull} alt="Accountant Genie" className="h-full w-auto object-contain dark:hidden" priority />
+      <Image src={logoFullDark} alt="Accountant Genie" className="hidden h-full w-auto object-contain dark:block" priority />
+    </span>
+  );
 }
