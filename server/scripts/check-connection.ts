@@ -1,7 +1,7 @@
 /**
  * Verifies both Neon connection strings before anything else runs.
  *
- * `pnpm db:check`
+ * `npm run db:check`
  *
  * Catches the two mistakes that produce confusing failures later:
  *   1. Pooled and direct URLs swapped (migrations then fail intermittently)
@@ -79,7 +79,7 @@ async function main() {
 
   console.log();
   if (problems === 0) {
-    console.log("Both connections are good. Next: pnpm bootstrap\n");
+    console.log("Both connections are good. Next: npm run bootstrap\n");
   } else {
     console.log(`${problems} problem(s) found — see .env.example for the expected shape.\n`);
     process.exitCode = 1;

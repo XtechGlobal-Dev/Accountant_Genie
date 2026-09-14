@@ -2,10 +2,11 @@
  * The individual things a local run needs done. Each step is independent and
  * reports what it did, so dev.mjs stays a readable list of intentions.
  */
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { ROOT, SERVER, binJs, c, log, run } from "./util.mjs";
+import { ROOT, SERVER, binJs, c, log, npmInvocation, run } from "./util.mjs";
 
 const ENV = path.join(SERVER, ".env");
 const ENV_EXAMPLE = path.join(SERVER, ".env.example");
@@ -29,6 +30,7 @@ export function ensureEnv() {
   }
 
   // Node reads .env natively; no dotenv dependency needed.
+  repairBlankLines(ENV);
   process.loadEnvFile(ENV);
 
   const url = process.env.DATABASE_URL;
@@ -42,6 +44,39 @@ export function ensureEnv() {
 
   log.ok(`server/.env loaded — ${describeDb(url)}`);
   return url;
+}
+
+/**
+ * Make blank-looking lines actually blank.
+ *
+ * `process.loadEnvFile` stops reading at a line that looks empty but holds a
+ * space or a tab, and says nothing: every key below it is silently absent.
+ * Editors produce those lines routinely — paste into a file with auto-indent
+ * on and you get one.
+ *
+ * The silence is what makes it dangerous rather than annoying. AUTH_SECRET
+ * going missing does not fail: `core/session` falls back to a known
+ * "dev-only-insecure-secret" and every one-time code is peppered with a value
+ * that is in the repository. A dropped ANTHROPIC_API_KEY quietly downgrades
+ * the whole classification tier to MockProvider.
+ *
+ * Only whitespace-only lines are touched — never a key, a value, or a comment.
+ */
+const CR = String.fromCharCode(13);
+const LF = String.fromCharCode(10);
+
+function repairBlankLines(file) {
+  const raw = readFileSync(file, "utf8");
+  const crlf = raw.includes(CR + LF);
+  const lines = raw.split(LF).map((l) => (l.endsWith(CR) ? l.slice(0, -1) : l));
+  const offenders = lines.filter((l) => l.length > 0 && l.trim() === "").length;
+  if (offenders === 0) return;
+
+  writeFileSync(file, lines.map((l) => (l.trim() === "" ? "" : l)).join(crlf ? CR + LF : LF));
+  log.warn(
+    `${offenders} blank line${offenders === 1 ? "" : "s"} in server/.env held a stray space — ` +
+      "cleared, or Node would have skipped every key below them",
+  );
 }
 
 function describeDb(url) {
@@ -59,21 +94,21 @@ function describeDb(url) {
 /** Both packages must be installed before anything can be generated or served. */
 export async function ensureDependencies() {
   log.step("Dependencies");
-  const missing = [
-    !existsSync(path.join(ROOT, "node_modules")) && "root",
-    !existsSync(path.join(SERVER, "node_modules")) && "server",
-  ].filter(Boolean);
+  // npm hoists a workspace's dependencies to the root, so server/node_modules
+  // may legitimately not exist. The root tree is the thing to check.
+  const missing = existsSync(path.join(ROOT, "node_modules")) ? [] : ["root"];
 
   if (missing.length === 0) {
-    log.ok("root and server packages installed");
+    log.ok("workspace dependencies installed");
     return;
   }
 
   log.warn(`node_modules missing for: ${missing.join(", ")} — installing`);
-  // The root package.json uses the workspace: protocol, which only pnpm understands.
-  await run("pnpm", ["install"], { cwd: ROOT }).catch(() => {
-    log.fail("pnpm install failed. This repo is a pnpm workspace — install pnpm first:");
-    log.plain(`    npm i -g pnpm`);
+  // One npm workspace: a single install at the root covers both packages.
+  const [cmd, args] = npmInvocation(["install"]);
+  await run(cmd, args, { cwd: ROOT }).catch(() => {
+    log.fail("npm install failed. Fix the error above and run it again:");
+    log.plain(`    npm install`);
     process.exit(1);
   });
   log.ok("dependencies installed");
@@ -200,6 +235,71 @@ async function countFirms() {
   } finally {
     await client.end().catch(() => {});
   }
+}
+
+/**
+ * Open the app in the default browser, once it actually answers.
+ *
+ * Opening the moment `next dev` is spawned lands on a connection error:
+ * the first compile takes seconds. So this polls the URL and opens on the
+ * first response of any kind — a 307 to /sign-in is still proof the server
+ * is up.
+ *
+ * Returns a cancel function. Ctrl-C before the server is ready must not
+ * leave a timer holding the terminal, nor pop a window after the user has
+ * already given up.
+ */
+export function openWhenReady(url, { timeoutMs = 90_000, intervalMs = 300 } = {}) {
+  let cancelled = false;
+  const deadline = Date.now() + timeoutMs;
+
+  void (async () => {
+    while (!cancelled && Date.now() < deadline) {
+      try {
+        await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(2_000) });
+        if (!cancelled) openBrowser(url);
+        return;
+      } catch {
+        // Not up yet. unref so this poll never outlives the servers it waits on.
+        await new Promise((resolve) => setTimeout(resolve, intervalMs).unref());
+      }
+    }
+  })();
+
+  return () => {
+    cancelled = true;
+  };
+}
+
+/** Hand a URL to whatever the operating system considers the browser. */
+function openBrowser(url) {
+  // `start` reads its first quoted argument as a window title, so it gets an
+  // empty one — otherwise a quoted URL would be swallowed as the title.
+  const [cmd, args] =
+    process.platform === "win32"
+      ? [process.env.ComSpec || "cmd", ["/c", "start", "", url]]
+      : process.platform === "darwin"
+        ? ["open", [url]]
+        : ["xdg-open", [url]];
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => log.warn(`could not open a browser — open ${url} yourself`));
+    child.unref();
+  } catch {
+    log.warn(`could not open a browser — open ${url} yourself`);
+  }
+}
+
+/**
+ * Whether to open a browser at all. Opt out with --no-open, with BROWSER=none
+ * (the convention other dev servers already follow), or by being CI, which has
+ * no browser to open and no one to see it.
+ */
+export function browserOpenEnabled(argv) {
+  if (argv.includes("--no-open")) return false;
+  if (process.env.BROWSER === "none") return false;
+  if (process.env.CI) return false;
+  return true;
 }
 
 /** True when REDIS_URL is configured, meaning jobs run in a separate worker. */

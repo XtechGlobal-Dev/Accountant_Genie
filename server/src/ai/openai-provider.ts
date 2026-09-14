@@ -30,6 +30,19 @@ export class OpenAIProvider implements AccountingAIProvider {
       const systemPrompt = loadClassificationPrompt();
       const context = buildContext(input);
 
+      // No `temperature: 0` here, though a classifier wants one.
+      //
+      // The current models on both providers have removed sampling parameters:
+      // gpt-5.5 answers `400 Unsupported parameter: "temperature" is not
+      // supported with this model`, and Claude Opus 5 returns a 400 the same way.
+      // Pinning determinism that way is simply not available any more — it was
+      // tried and measured, not assumed.
+      //
+      // So the same statement can code differently on a re-run. Two consequences
+      // that are handled elsewhere rather than wished away: the golden set runs
+      // several passes and reports the spread (scripts/ai-golden.ts), and every
+      // coding stores its own lineage so a past decision stays explicable even
+      // though it would not necessarily be reproduced.
       const response = await this.client.responses.parse({
         model: this.model,
         input: [

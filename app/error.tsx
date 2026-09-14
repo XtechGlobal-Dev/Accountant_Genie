@@ -48,8 +48,8 @@ export default function AppError({
               </p>
               <pre className="code mt-4 overflow-x-auto rounded-control border border-rule bg-surface-2 px-4 py-3 text-[12.5px] leading-relaxed text-ink">
 {`npx prisma db push --accept-data-loss
-pnpm db:constraints
-pnpm db:seed`}
+npm run db:constraints
+npm run db:seed`}
               </pre>
               <p className="mt-3 text-xs leading-relaxed text-ink-3">
                 Local development only. Staging and production run{" "}

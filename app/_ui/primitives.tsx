@@ -11,7 +11,7 @@
 
 import "client-only";
 
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useState, type ChangeEvent, type ComponentProps, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { Icon, type IconName } from "./icons";
@@ -168,6 +168,28 @@ function FieldError({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
+/**
+ * A submit-time error, hidden again as soon as the control is edited.
+ *
+ * The message describes the value that was *submitted*. Once someone starts
+ * fixing the field it is about something that is no longer there — "Enter the
+ * last 3-4 digits only" sitting under a box that now reads 4242 tells the
+ * person their correct answer is wrong.
+ *
+ * It comes back if the next submit rejects the new value. Forms clear their
+ * error state before calling the action, so even a repeat of the identical
+ * message arrives here as a prop change and re-shows.
+ */
+function useSubmitError(error: string | undefined) {
+  const [edited, setEdited] = useState(false);
+  useEffect(() => {
+    setEdited(false);
+  }, [error]);
+  // Setting true when already true is a no-op re-render in React, so this is
+  // safe to call on every keystroke.
+  return { shown: edited ? undefined : error, onEdit: () => setEdited(true) };
+}
+
 export function Field({
   label,
   name,
@@ -198,7 +220,8 @@ export function Field({
   className?: string | undefined;
 }) {
   const id = `field-${name}`;
-  const describedBy = [error ? `${id}-error` : null, hint ? `${id}-hint` : null]
+  const { shown, onEdit } = useSubmitError(error);
+  const describedBy = [shown ? `${id}-error` : null, hint ? `${id}-hint` : null]
     .filter(Boolean)
     .join(" ");
 
@@ -226,12 +249,13 @@ export function Field({
           placeholder={placeholder}
           autoComplete={autoComplete}
           inputMode={inputMode}
-          aria-invalid={error ? true : undefined}
+          onChange={onEdit}
+          aria-invalid={shown ? true : undefined}
           aria-describedby={describedBy || undefined}
           className={cx(inputClass, icon && "pl-9")}
         />
       </div>
-      {error ? <FieldError id={`${id}-error`}>{error}</FieldError> : null}
+      {shown ? <FieldError id={`${id}-error`}>{shown}</FieldError> : null}
       {hint ? (
         <p id={`${id}-hint`} className="text-xs leading-relaxed text-ink-3">
           {hint}
@@ -269,7 +293,8 @@ export function PasswordField({
 }) {
   const [visible, setVisible] = useState(false);
   const id = `field-${name}`;
-  const describedBy = [error ? `${id}-error` : null, hint ? `${id}-hint` : null]
+  const { shown, onEdit } = useSubmitError(error);
+  const describedBy = [shown ? `${id}-error` : null, hint ? `${id}-hint` : null]
     .filter(Boolean)
     .join(" ");
 
@@ -293,11 +318,18 @@ export function PasswordField({
           required
           placeholder={placeholder}
           autoComplete={autoComplete}
-          aria-invalid={error ? true : undefined}
+          aria-invalid={shown ? true : undefined}
           aria-describedby={describedBy || undefined}
+          // A controlled caller keeps its own onChange; either way the error clears.
           {...(onChange
-            ? { value: value ?? "", onChange: (event) => onChange(event.target.value) }
-            : {})}
+            ? {
+                value: value ?? "",
+                onChange: (event: ChangeEvent<HTMLInputElement>) => {
+                  onEdit();
+                  onChange(event.target.value);
+                },
+              }
+            : { onChange: onEdit })}
           className={cx(inputClass, "pl-9 pr-11")}
         />
         <button
@@ -310,7 +342,7 @@ export function PasswordField({
           <Icon name={visible ? "eye-off" : "eye"} className="size-4" />
         </button>
       </div>
-      {error ? <FieldError id={`${id}-error`}>{error}</FieldError> : null}
+      {shown ? <FieldError id={`${id}-error`}>{shown}</FieldError> : null}
       {hint ? (
         <p id={`${id}-hint`} className="text-xs leading-relaxed text-ink-3">
           {hint}
@@ -334,6 +366,7 @@ export function Select({
   hint?: string | undefined;
 } & ComponentProps<"select">) {
   const selectId = id ?? (rest.name ? `select-${rest.name}` : undefined);
+  const { shown, onEdit } = useSubmitError(error);
 
   return (
     <div className={cx("flex flex-col gap-1.5", className)}>
@@ -345,9 +378,14 @@ export function Select({
       <div className="relative">
         <select
           id={selectId}
-          aria-invalid={error ? true : undefined}
+          aria-invalid={shown ? true : undefined}
           className={cx(inputClass, "appearance-none pr-9")}
           {...rest}
+          // After `rest`, so a caller's own onChange still runs rather than being lost.
+          onChange={(event) => {
+            onEdit();
+            rest.onChange?.(event);
+          }}
         >
           {children}
         </select>
@@ -356,8 +394,8 @@ export function Select({
           className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-ink-3"
         />
       </div>
-      {error ? (
-        <FieldError id={`${selectId ?? "select"}-error`}>{error}</FieldError>
+      {shown ? (
+        <FieldError id={`${selectId ?? "select"}-error`}>{shown}</FieldError>
       ) : null}
       {hint ? <p className="text-xs leading-relaxed text-ink-3">{hint}</p> : null}
     </div>

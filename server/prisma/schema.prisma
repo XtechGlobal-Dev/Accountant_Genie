@@ -122,6 +122,7 @@ model User {
   postedJournals JournalEntry[]
   sessions       Session[]
   otpCodes       OtpCode[]
+  trustedDevices TrustedDevice[]
   verifiedRules  TaxRuleVersion[]
 
   @@index([firmId])
@@ -144,6 +145,31 @@ model Session {
   expiresAt DateTime
   createdAt DateTime @default(now())
   lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// A browser that has already proved a one-time code. While its token is
+/// valid, sign-in on that browser is password-only: the second factor is
+/// remembered, not skipped. The cookie carries a random token and only its
+/// hash is stored, so a database read never yields a usable credential.
+///
+/// Revoking sets revokedAt rather than deleting the row, so "this laptop
+/// stopped being trusted, and when" stays answerable.
+model TrustedDevice {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  /// What the person sees in Settings - "Chrome on Windows", read from the
+  /// user agent when the device was trusted. Never an address.
+  label      String
+  expiresAt  DateTime
+  lastUsedAt DateTime  @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

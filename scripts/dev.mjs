@@ -2,7 +2,7 @@
 /**
  * One command to run Accountant Genie locally:
  *
- *   npm run dev          (or pnpm dev)
+ *   npm run dev
  *
  * Backend first, then the frontend — because the frontend cannot render a page
  * without the generated Prisma client and a schema that matches it:
@@ -18,12 +18,15 @@
  *   --skip-db     skip steps 3–5 (fast restart when nothing schema-related changed)
  *   --seed        force a reseed even if the database already has firms
  *   --port <n>    dev server port (default 3000)
+ *   --no-open     do not open a browser (also: BROWSER=none, or any CI)
  */
 import { ROOT, SERVER, binJs, c, log, startLongRunning } from "./lib/util.mjs";
 import {
+  browserOpenEnabled,
   ensureDependencies,
   ensureEnv,
   generateClient,
+  openWhenReady,
   pushSchema,
   seedIfEmpty,
   workerEnabled,
@@ -37,6 +40,7 @@ const valueOf = (flag, fallback) => {
 };
 
 const port = valueOf("--port", process.env.PORT || "3000");
+const url = `http://localhost:${port}`;
 
 log.plain();
 log.plain(`  ${c.bold(c.blue("Accountant Genie"))} ${c.dim("· local development")}`);
@@ -72,7 +76,9 @@ if (workerEnabled()) {
   log.info(c.dim("worker  not started — no REDIS_URL, jobs run in process"));
 }
 
-log.ok(`app     ${c.bold(`http://localhost:${port}`)}`);
+log.ok(`app     ${c.bold(url)}`);
+const opening = browserOpenEnabled(argv);
+if (opening) log.info(c.dim("        opening in your browser once it answers…"));
 log.plain();
 
 children.push(
@@ -85,11 +91,16 @@ children.push(
   ),
 );
 
+// Polls in the background rather than blocking: the terminal stays live, and
+// Ctrl-C during the first compile cancels the tab instead of racing it.
+const cancelOpen = opening ? openWhenReady(url) : null;
+
 // One Ctrl-C should take the whole thing down, worker included.
 let closing = false;
 const shutdown = (signal) => {
   if (closing) return;
   closing = true;
+  cancelOpen?.();
   log.plain();
   log.plain(`  ${c.dim("shutting down…")}`);
   for (const child of children) child.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM");

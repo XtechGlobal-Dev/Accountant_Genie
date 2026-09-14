@@ -1,7 +1,7 @@
 /**
  * Lists the models the configured account can actually use.
  *
- * `pnpm ai:models`
+ * `npm run ai:models`
  *
  * Model ids change often, so this asks the API rather than relying on a
  * hardcoded guess. Put the one you want in ANTHROPIC_MODEL (or OPENAI_MODEL)

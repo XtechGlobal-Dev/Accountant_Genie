@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import { Geist, Geist_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -41,6 +40,14 @@ export const metadata: Metadata = {
 
 // Applies the saved appearance before first paint so a dark preference never
 // flashes light. Light is the default; "system" follows the OS.
+//
+// Deliberately a plain <script> rather than next/script. `beforeInteractive`
+// is documented as not blocking hydration and is hoisted into <head> wherever
+// it sits, so it buys nothing here — while rendering a <Script> inside an
+// explicit <head> makes React warn that it "encountered a script tag while
+// rendering", because the element ends up in the client tree. An inline
+// script written straight into the HTML runs during parse, which is the one
+// property a flash-of-wrong-theme fix actually needs.
 const THEME_SCRIPT =
   '(function(){try{var t=localStorage.getItem("ledgerly-theme");' +
   'if(t==="system"){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}' +
@@ -57,11 +64,16 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <Script id="ledgerly-theme" strategy="beforeInteractive">
-          {THEME_SCRIPT}
-        </Script>
+        <script id="ledgerly-theme" dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
-      <body className="bg-ground font-sans text-ink">
+      {/*
+        Browser extensions write their own attributes onto <body> before React
+        hydrates — ColorZilla's `cz-shortcut-listen`, password managers, and
+        others — and React reports each as a hydration mismatch it cannot
+        patch. Suppression is shallow: it covers this element's own attributes
+        and nothing inside it, so a real mismatch in the app still surfaces.
+      */}
+      <body className="bg-ground font-sans text-ink" suppressHydrationWarning>
         {/* Keyboard users land here first and can jump the sidebar. */}
         <a
           href="#main"

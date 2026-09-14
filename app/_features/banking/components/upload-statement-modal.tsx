@@ -183,7 +183,13 @@ export function UploadStatementModal({
                   accept=".csv,.pdf,text/csv,application/pdf"
                   required
                   className="sr-only"
-                  onChange={(event) => setFilename(event.target.files?.[0]?.name ?? null)}
+                  onChange={(event) => {
+                    setFilename(event.target.files?.[0]?.name ?? null);
+                    // The rejection was about the previous file. Choosing another
+                    // makes it stale, the same way an edited text field does.
+                    setError(null);
+                    setField(null);
+                  }}
                 />
                 <span className="text-sm font-medium">{filename ?? "Choose a CSV or PDF"}</span>
                 <span className="text-xs text-ink-3">Up to 10 MB. Scanned PDFs have no text to read and are refused.</span>

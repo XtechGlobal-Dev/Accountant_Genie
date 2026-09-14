@@ -49,6 +49,8 @@ export type AuditAction =
   | "PASSWORD_CHANGED"
   | "SIGNED_IN"
   | "SIGNED_OUT"
+  | "DEVICE_TRUSTED"
+  | "DEVICE_REVOKED"
   | "ACCOUNT_VERIFIED"
   | "TAX_RULE_PROPOSED"
   | "TAX_RULE_VERIFIED"
@@ -77,7 +79,8 @@ export interface AuditEvent {
     | "Subcontractor"
     | "BankFeedRequest"
     | "BankFeedConnection"
-    | "TaxRuleVersion";
+    | "TaxRuleVersion"
+    | "TrustedDevice";
   entityId: string;
   before?: Prisma.InputJsonValue | undefined;
   after?: Prisma.InputJsonValue | undefined;

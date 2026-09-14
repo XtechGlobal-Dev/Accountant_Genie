@@ -4,6 +4,7 @@ import * as accounts from "@/server/modules/accounts/service";
 import * as assets from "@/server/modules/assets/service";
 import * as banking from "@/server/modules/banking/service";
 import * as feeds from "@/server/modules/banking/feeds";
+import * as auth from "@/server/modules/auth/service";
 import * as clients from "@/server/modules/clients/service";
 import * as ledger from "@/server/modules/ledger/service";
 import * as loans from "@/server/modules/loans/service";
@@ -38,6 +39,7 @@ interface Fixture {
   subcontractorId: string;
   feedRequestId: string;
   jobId: string;
+  trustedDeviceId: string;
 }
 
 const STAMP = Date.now();
@@ -108,6 +110,15 @@ async function seedFirm(tag: string): Promise<Fixture> {
     data: { firmId: firm.id, clientId: client.id, type: "RECONCILE_CLIENT", idempotencyKey: `idor-${tag}-${STAMP}` },
     select: { id: true },
   });
+  const device = await db.trustedDevice.create({
+    data: {
+      userId: user.id,
+      tokenHash: `device-${tag}-${STAMP}`,
+      label: "Chrome on Windows",
+      expiresAt: new Date(Date.now() + 30 * 86_400_000),
+    },
+    select: { id: true },
+  });
   return {
     firmId: firm.id,
     userId: user.id,
@@ -122,6 +133,7 @@ async function seedFirm(tag: string): Promise<Fixture> {
     subcontractorId: sub.id,
     feedRequestId: feed.id,
     jobId: job.id,
+    trustedDeviceId: device.id,
   };
 }
 
@@ -165,6 +177,14 @@ describe("Firm A cannot read Firm B", () => {
     expect(await reconcile.getReviewSummary(a.firmId, b.clientId)).toBeNull();
     expect(await reconcile.listMemory(a.firmId, b.clientId)).toBeNull();
     expect((await reconcile.listMemory(a.firmId))?.map((r) => r.id)).not.toContain(b.memoryRuleId);
+  });
+
+  // A trusted device removes the second factor from a sign-in, so one firm
+  // reaching another's is the worst version of this bug: it would let a
+  // stranger strip someone's MFA, or learn which browsers they work from.
+  it("trusted devices", async () => {
+    expect(await auth.listDevices(a.firmId, b.userId)).toEqual([]);
+    expect((await auth.listDevices(a.firmId, a.userId)).map((d) => d.id)).not.toContain(b.trustedDeviceId);
   });
 
   it("ledger and reports", async () => {
@@ -228,6 +248,19 @@ describe("Firm A cannot write to Firm B", () => {
     // Firm B's private account cannot be posted to from Firm A's own client either.
     expect(await ledger.postJournal(a.firmId, a.userId, a.clientId, { date, source: "MANUAL", lines })).toMatchObject({ ok: false, error: expect.stringMatching(/account not found/i) });
     expect(await ledger.reverseJournal(a.firmId, a.userId, b.clientId, b.entryId, { date })).toMatchObject(notFound);
+  });
+
+  it("trusted devices, by any combination of firm and user", async () => {
+    expect(await auth.revokeDevice(a.firmId, a.userId, b.trustedDeviceId)).toMatchObject(notFound);
+    // Naming Firm B's user does not help: the firm is still Firm A's session.
+    expect(await auth.revokeDevice(a.firmId, b.userId, b.trustedDeviceId)).toMatchObject(notFound);
+    // Nor does naming Firm B's firm with Firm A's user.
+    expect(await auth.revokeDevice(b.firmId, a.userId, b.trustedDeviceId)).toMatchObject(notFound);
+    const still = await db.trustedDevice.findUnique({
+      where: { id: b.trustedDeviceId },
+      select: { revokedAt: true },
+    });
+    expect(still?.revokedAt).toBeNull();
   });
 
   it("chart of accounts", async () => {

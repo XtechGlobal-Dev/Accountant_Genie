@@ -4,9 +4,10 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/server/core/session";
 import { can } from "@/server/core/permissions";
 import { getSettings, listAudit } from "@/server/modules/firms/service";
-import { listTeam } from "@/server/modules/auth/service";
+import { listDevices, listTeam } from "@/server/modules/auth/service";
 import { abn as formatAbn, shortDate } from "@/shared/format";
 import { ChangePasswordCard } from "@/features/settings/components/change-password-card";
+import { TrustedDevicesCard } from "@/features/settings/components/trusted-devices-card";
 import { EditFirmButton, EditProfileButton } from "@/features/settings/components/settings-forms";
 import { Icon, type IconName } from "@/ui/icons";
 import { buttonClass, cx } from "@/ui/styles";
@@ -95,9 +96,10 @@ export default async function SettingsPage({
   const session = await requireSession();
   const query = await searchParams;
   const canAudit = can(session, "audit:read");
-  const [settings, team, activity] = await Promise.all([
+  const [settings, team, devices, activity] = await Promise.all([
     getSettings(session.firmId, session.userId),
     listTeam(session.firmId),
+    listDevices(session.firmId, session.userId),
     canAudit ? listAudit(session.firmId, ACTIVITY_PREVIEW) : Promise.resolve([]),
   ]);
   if (!settings) notFound();
@@ -150,6 +152,9 @@ export default async function SettingsPage({
           </dl>
         </Card>
       </div>
+
+      {/* The browsers that skip the code */}
+      <TrustedDevicesCard devices={devices} />
 
       {/* The people and the latest changes */}
       <div className="grid gap-3 xl:grid-cols-2">

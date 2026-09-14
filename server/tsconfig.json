@@ -1,5 +1,5 @@
 {
-  // Standalone typecheck of the backend: pnpm --filter @ledgerly/server typecheck
+  // Standalone typecheck of the backend: npm run typecheck --workspace @ledgerly/server
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "paths": {

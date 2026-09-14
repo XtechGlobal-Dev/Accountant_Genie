@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/server/core/session";
+import { deviceLabel } from "@/server/core/device-label";
 import { invalid } from "@/server/core/result";
 import { can, forbidden } from "@/server/core/permissions";
 import type { ActionResult } from "@/shared/contracts/result";
@@ -23,6 +24,12 @@ async function clientIp(): Promise<string | null> {
   const h = await headers();
   const forwarded = h.get("x-forwarded-for");
   return forwarded ? (forwarded.split(",")[0]?.trim() ?? null) : (h.get("x-real-ip") ?? null);
+}
+
+/** How this browser names itself, coarsened into a label someone can recognise. */
+async function browserLabel(): Promise<string> {
+  const h = await headers();
+  return deviceLabel(h.get("user-agent"));
 }
 
 function fail(result: { ok: false; error: string; field?: string }): AuthFormResult {
@@ -48,7 +55,7 @@ export async function signUp(formData: FormData): Promise<AuthFormResult> {
 export async function verifyCode(formData: FormData): Promise<AuthFormResult> {
   const parsed = fromForm.otp(formData);
   if (!parsed.success) return invalid(parsed.error) as AuthFormResult;
-  const result = await service.verifySignIn(parsed.data.code);
+  const result = await service.verifySignIn(parsed.data.code, parsed.data.remember, await browserLabel());
   if (!result.ok) return fail(result);
   redirect(result.next);
 }
@@ -90,6 +97,16 @@ export async function changePassword(formData: FormData): Promise<ActionResult> 
   const parsed = fromForm.changePassword(formData);
   if (!parsed.success) return invalid(parsed.error);
   const result = await service.changePassword(session.firmId, session.userId, parsed.data.current, parsed.data.password);
+  if (result.ok) revalidatePath("/settings");
+  return result;
+}
+
+export async function revokeDevice(deviceId: string): Promise<ActionResult> {
+  const session = await requireSession();
+  // No permission gate: these are your own browsers, not the firm's. The
+  // service scopes the row to this user inside this firm, so another
+  // person's device id is not found rather than refused.
+  const result = await service.revokeDevice(session.firmId, session.userId, deviceId);
   if (result.ok) revalidatePath("/settings");
   return result;
 }

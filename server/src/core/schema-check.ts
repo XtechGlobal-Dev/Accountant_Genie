@@ -11,7 +11,7 @@ import "server-only";
 
 export const SCHEMA_BEHIND_MESSAGE =
   "The database schema is behind prisma/schema.prisma. " +
-  "Run `npx prisma db push --accept-data-loss`, then `pnpm db:constraints`, then `pnpm db:seed`, and restart the dev server. " +
+  "Run `npx prisma db push --accept-data-loss`, then `npm run db:constraints`, then `npm run db:seed`, and restart the dev server. " +
   "On staging or production run `prisma migrate deploy` instead.";
 
 export class SchemaBehindError extends Error {
