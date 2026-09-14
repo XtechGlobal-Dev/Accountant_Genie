@@ -1,0 +1,962 @@
+// Accountant Genie — AI reconciliation + Australian tax reporting on a double-entry spine.
+//
+// Money is stored as INTEGER CENTS everywhere (`...Cents` suffix). No floats, no
+// Decimal marshalling. A single line is capped at ~$21.4M (Int max); aggregates are
+// summed in JS numbers, which stay exact to 2^53 cents (~$90 trillion).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+// Prisma 7: the connection URL lives in prisma.config.ts, and the runtime client
+// connects through a driver adapter (see server/core/db.ts).
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+/// The state or territory the firm practises in.
+///
+/// Not cosmetic: payroll tax thresholds and rates are set per state, and
+/// several registrations are state-based. Stored on the firm, not the user,
+/// because it describes the practice.
+enum AuState {
+  NSW
+  VIC
+  QLD
+  WA
+  SA
+  TAS
+  ACT
+  NT
+}
+
+/// The professional body a practitioner belongs to.
+///
+/// Carried because preparing BAS for a fee is regulated conduct in Australia:
+/// it requires registration with the Tax Practitioners Board. Which body a
+/// person belongs to is how a firm evidences that, so it is asked at sign-up
+/// rather than left for someone to remember later.
+enum ProfessionalBody {
+  CA_ANZ
+  CPA_AUSTRALIA
+  IPA
+  ATMA
+  TPB
+  NTAA
+  OTHER
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+model Firm {
+  id        String   @id @default(cuid())
+  name      String
+  abn       String?
+  /// Where the practice operates. Drives state-based obligations.
+  state     AuState?
+  /// Marketing attribution, captured once at sign-up. Never used in a
+  /// calculation and never shown to a client.
+  howHeard  String?
+  /// Plan definitions live in code (server/modules/billing/plans.ts); the
+  /// firm stores which one it chose. Payment collection arrives with Stripe.
+  planCode        String          @default("TRIAL")
+  billingInterval BillingInterval @default(MONTHLY)
+  planChangedAt   DateTime?
+  /// Stripe identifiers once checkout has run. Never the card.
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+  createdAt DateTime @default(now())
+
+  users       User[]
+  clients     Client[]
+  accounts    Account[]
+  memoryRules MemoryRule[]
+  auditLogs   AuditLog[]
+  jobs        Job[]
+}
+
+/// Roles map to permissions in one place: server/core/permissions.ts.
+/// Code checks a permission, never a role.
+enum UserRole {
+  OWNER
+  ADMIN
+  ACCOUNTANT
+  BOOKKEEPER
+  STAFF
+  VIEWER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  firmId    String
+  email     String   @unique
+  name      String
+  role      UserRole @default(ACCOUNTANT)
+  phone     String?
+  /// Free text: "Principal", "Senior Accountant", "Bookkeeper".
+  professionalTitle String?
+  /// Set when `isTaxAgent` is true. The body is what a registration is held
+  /// with, and the pair is what lets this person verify a tax rule.
+  professionalBody  ProfessionalBody?
+  isTaxAgent Boolean @default(false)
+  agentNumber String?
+  /// scrypt hash; null until the person sets a password
+  passwordHash       String?
+  mustChangePassword Boolean   @default(false)
+  emailVerifiedAt    DateTime?
+  lastLoginAt        DateTime?
+  /// Google account id (the OIDC "sub" claim) when signed in with Google.
+  googleSubject      String?   @unique
+  createdAt DateTime @default(now())
+
+  firm           Firm           @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  auditLogs      AuditLog[]
+  postedJournals JournalEntry[]
+  sessions       Session[]
+  otpCodes       OtpCode[]
+  verifiedRules  TaxRuleVersion[]
+
+  @@index([firmId])
+}
+
+/// A sliding-window counter for throttling — failed sign-ins per email and
+/// per address, code requests, and so on. Keyed by what is being limited.
+model RateLimit {
+  key         String   @id
+  count       Int      @default(0)
+  windowStart DateTime @default(now())
+}
+
+/// A signed-in browser. The cookie carries a random token; only its hash is
+/// stored, so a database read never yields a usable credential.
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+enum OtpPurpose {
+  SIGN_IN
+  PASSWORD_RESET
+  VERIFY_EMAIL
+}
+
+/// A six-digit code sent by email. Hashed at rest, single use, short-lived,
+/// and locked after a handful of wrong attempts.
+model OtpCode {
+  id         String     @id @default(cuid())
+  userId     String
+  purpose    OtpPurpose
+  codeHash   String
+  attempts   Int        @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+enum EntityType {
+  COMPANY
+  PARTNERSHIP
+  SOLE_TRADER
+  UNIT_TRUST
+  DISCRETIONARY_TRUST
+}
+
+enum GstBasis {
+  CASH
+  ACCRUAL
+}
+
+enum BasFrequency {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+model Client {
+  id            String       @id @default(cuid())
+  firmId        String
+  businessName  String
+  legalName     String?
+  abn           String?
+  industry      String?
+  entityType    EntityType   @default(COMPANY)
+  gstRegistered Boolean      @default(true)
+  gstBasis      GstBasis     @default(CASH)
+  basFrequency  BasFrequency @default(QUARTERLY)
+  // Company / unit trust equity inputs
+  incomeTaxRate Int?         @default(25) // percent
+  totalUnits    Int?
+  unitValueCents Int?
+  email         String?
+  phone         String?
+  /// The client's identity at the bank-feed provider. One Client is one Fiskil
+  /// end user; it is created lazily, the first time a feed is connected.
+  feedEndUserId String?      @unique
+  /// Soft archive — clients are never hard-deleted, they hold accounting history
+  archivedAt    DateTime?
+  createdAt     DateTime     @default(now())
+
+  firm           Firm             @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  bankAccounts   BankAccount[]
+  journalEntries JournalEntry[]
+  accounts       Account[]
+  memoryRules    MemoryRule[]
+  notes          ClientNote[]
+  partners       Partner[]
+  assets         Asset[]
+  loans          Loan[]
+  subcontractors Subcontractor[]
+  feedRequests   BankFeedRequest[]
+  feedConnections BankFeedConnection[]
+  feedSyncRuns    FeedSyncRun[]
+
+  @@index([firmId])
+}
+
+model ClientNote {
+  id        String   @id @default(cuid())
+  clientId  String
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+/// A partner in a PARTNERSHIP client and their share of the business.
+///
+/// Shares are stored in basis points (10000 = 100%), never as a float: the
+/// service refuses to save a set of partners whose shares do not sum to exactly
+/// 10000, so a partnership distribution can never be out by a rounding error.
+model Partner {
+  id               String   @id @default(cuid())
+  clientId         String
+  name             String
+  shareBasisPoints Int
+  createdAt        DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+// ---------------------------------------------------------------------------
+// Chart of accounts
+// ---------------------------------------------------------------------------
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  COGS
+  EXPENSE
+  /// Sentinel accounts only (Unknown, Suspense) — never appears on a finished report
+  UNKNOWN
+}
+
+/// Australian tax codes, using the standard vocabulary AU accountants already know
+/// from Xero and MYOB. The income/expense direction is part of the code because the
+/// BAS needs it: 1A aggregates GST on income, 1B aggregates GST on expenses. A flat
+/// "GST" value cannot produce a correct BAS.
+enum GstTreatment {
+  GST_ON_INCOME     // 10% GST on sales            → G1  + 1A
+  GST_FREE_INCOME   // GST-free supply             → G1,  no 1A
+  GST_ON_EXPENSES   // 10% GST on purchases        → G11 + 1B
+  GST_FREE_EXPENSES // GST-free purchase           → G11, no 1B
+  GST_ON_CAPITAL    // Capital acquisition w/ GST  → G10 + 1B
+  GST_FREE_CAPITAL  // Capital acquisition, no GST → G10
+  INPUT_TAXED       // Financial supplies, residential rent — no input tax credit
+  BAS_EXCLUDED      // Wages, drawings, ATO payments, transfers, loan principal
+  /// Not yet determined. Valid on a sentinel account only, and must be resolved
+  /// before any BAS is generated.
+  UNALLOCATED
+}
+
+model Account {
+  id           String       @id @default(cuid())
+  /// null = built-in system account, shared by every firm
+  firmId       String?
+  /// null = applies to every client of the firm
+  clientId     String?
+  code         Int
+  name         String
+  type         AccountType
+  gstTreatment GstTreatment
+  description  String?
+  isSystem     Boolean      @default(false)
+  isActive     Boolean      @default(true)
+  /// Marks the account used as "Cash at Bank" on the balance sheet
+  isCashAtBank Boolean      @default(false)
+  /// Set where the correct AU tax treatment is not yet confirmed by the registered
+  /// tax advisor. Surfaced in the UI; blocks nothing, but must be cleared before GA.
+  requiresVerification Boolean @default(false)
+  /// Why the treatment is uncertain — shown to the advisor, not to end users
+  taxNote      String?
+  createdAt    DateTime     @default(now())
+
+  firm             Firm?             @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  client           Client?           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  journalLines     JournalLine[]
+  bankTransactions BankTransaction[]
+  memoryRules      MemoryRule[]
+
+  @@unique([code, firmId, clientId])
+  @@index([firmId])
+  @@index([clientId])
+  @@index([code])
+}
+
+// ---------------------------------------------------------------------------
+// Bank data
+// ---------------------------------------------------------------------------
+
+enum BankAccountKind {
+  BANK
+  CREDIT_CARD
+}
+
+enum BankSource {
+  MANUAL
+  FEED
+}
+
+model BankAccount {
+  id           String          @id @default(cuid())
+  clientId     String
+  name         String
+  kind         BankAccountKind @default(BANK)
+  source       BankSource      @default(MANUAL)
+  accountMask  String?
+  isCashAtBank Boolean         @default(false)
+  /// The account's id at the feed provider, once a feed is connected.
+  externalAccountId String?
+  /// Which consent this account arrived through, for revocation and display.
+  feedConnectionId  String?
+  /// Product category as the provider reports it (TRANS_AND_SAVINGS_ACCOUNTS, …).
+  /// Display only. Balances are NEVER stored — they are read live on request.
+  feedProductCategory String?
+  feedLastSyncedAt  DateTime?
+  createdAt    DateTime        @default(now())
+
+  client       Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  feedConnection BankFeedConnection? @relation(fields: [feedConnectionId], references: [id], onDelete: SetNull)
+  transactions BankTransaction[]
+  imports      StatementImport[]
+
+  @@index([clientId])
+  @@index([feedConnectionId])
+  /// One row per provider account. NULL for manual accounts, and Postgres treats
+  /// NULLs as distinct, so any number of manual accounts coexist.
+  @@unique([clientId, externalAccountId])
+}
+
+enum ImportStatus {
+  PARSING
+  RECONCILING
+  COMPLETE
+  FAILED
+}
+
+model StatementImport {
+  id            String       @id @default(cuid())
+  bankAccountId String
+  filename      String
+  fileType      String
+  status        ImportStatus @default(PARSING)
+  rowCount      Int          @default(0)
+  duplicateCount Int         @default(0)
+  error         String?
+  /// Where the original file is kept for audit (local disk in the prototype).
+  storagePath   String?
+  /// Which CSV columns fed which fields, so an import can be explained later.
+  columnMap     Json?
+  /// Rows that could not be parsed, with their reasons. The rest still import.
+  failedRows    Json?
+  /// The pipeline stage last reached, for the Activity Panel.
+  stage         String?
+  createdById   String?
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+
+  bankAccount  BankAccount       @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([bankAccountId])
+  @@index([createdAt])
+}
+
+enum TxStatus {
+  PENDING     // parsed, not yet classified
+  CLASSIFIED  // coded by the engine, awaiting human review
+  REVIEWED    // signed off by a human
+}
+
+enum ClassificationSource {
+  RULE
+  MEMORY
+  AI
+  MANUAL
+}
+
+model BankTransaction {
+  id            String @id @default(cuid())
+  bankAccountId String
+  importId      String?
+
+  date        DateTime
+  description String
+  /// Lower-cased, noise-stripped description used for rule and memory matching
+  normalised  String
+  /// Signed: negative = money out of the account
+  amountCents Int
+  balanceCents Int?
+
+  /// Stable hash of (bankAccount, date, amount, description) for idempotent re-imports
+  fingerprint String
+
+  /// The provider's own transaction id, when the row came from a live feed.
+  /// This is the real identity for feed rows — the fingerprint is the fallback
+  /// for uploaded statements, which carry no stable id.
+  externalId  String?
+  /// Provider settlement timestamps. `date` stays the reporting date (posted,
+  /// falling back to execution) so every report reads one field.
+  postedAt      DateTime?
+  executionAt   DateTime?
+  /// The provider's categorisation. A SIGNAL for the rules tier, never a
+  /// posting decision on its own — CDR categories are not a chart of accounts.
+  feedCategory    String?
+  feedSubcategory String?
+  /// How sure the provider is of its own category (VERY_HIGH … LOW). A low
+  /// confidence category is weak evidence about weak evidence.
+  feedCategoryConfidence String?
+  /// ISO 18245 merchant category code, e.g. 5812 = eating places. A standard,
+  /// unlike the provider's own taxonomy, so it is usable without their docs.
+  feedMerchantCode String?
+  /// The untouched provider payload. Providers add fields inside a major
+  /// version, so nothing is silently dropped and any mapping can be re-derived.
+  feedRaw       Json?
+
+  status       TxStatus     @default(PENDING)
+  accountId    String?
+  gstTreatment GstTreatment?
+  gstCents     Int          @default(0)
+  netCents     Int          @default(0)
+
+  source     ClassificationSource?
+  confidence Float?
+  reasoning  String?
+  /// Whether a person must look before this can be accepted. Rules and memory
+  /// clear it; the AI tier sets it whenever confidence or risk says so.
+  needsReview Boolean @default(true)
+  /// LOW or HIGH — scored separately from confidence. See reconcile/risk.ts.
+  risk        String?
+  /// Lineage: provider, model, prompt version, rules version, memory version.
+  aiMeta      Json?
+  memoryRuleId String?
+  /// For TPAR: which subcontractor a payment went to.
+  subcontractorId String?
+
+  journalEntryId String?
+  reviewedAt     DateTime?
+  reviewedById   String?
+  /// Excluded from the books (a personal transaction, a duplicate). Never deleted.
+  excludedAt     DateTime?
+  excludeReason  String?
+  createdAt      DateTime  @default(now())
+
+  bankAccount   BankAccount      @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  import        StatementImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+  account       Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  journalEntry  JournalEntry?    @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+  memoryRule    MemoryRule?      @relation(fields: [memoryRuleId], references: [id], onDelete: SetNull)
+  subcontractor Subcontractor?   @relation(fields: [subcontractorId], references: [id], onDelete: SetNull)
+
+  @@unique([bankAccountId, fingerprint])
+  @@unique([bankAccountId, externalId])
+  @@index([bankAccountId, date])
+  @@index([status])
+  @@index([accountId])
+  @@index([subcontractorId])
+}
+
+// ---------------------------------------------------------------------------
+// Double-entry ledger
+// ---------------------------------------------------------------------------
+
+enum JournalSource {
+  BANK
+  MANUAL
+  OPENING
+}
+
+/// A posted journal entry. POSTED ENTRIES ARE IMMUTABLE: no service updates one,
+/// and a correction is a reversal plus a correcting entry. `reversesId` links a
+/// reversing entry to the one it cancels; its uniqueness means an entry can be
+/// reversed exactly once.
+model JournalEntry {
+  id          String        @id @default(cuid())
+  clientId    String
+  date        DateTime
+  reference   String?
+  description String?
+  source      JournalSource @default(BANK)
+  /// Sum of the debit lines — equal to the sum of the credit lines by construction.
+  totalCents  Int           @default(0)
+  /// The entry this one reverses, when it is a reversal.
+  reversesId  String?       @unique
+  postedById  String?
+  createdAt   DateTime      @default(now())
+
+  client       Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  postedBy     User?             @relation(fields: [postedById], references: [id], onDelete: SetNull)
+  reverses     JournalEntry?     @relation("Reversal", fields: [reversesId], references: [id], onDelete: Restrict)
+  reversedBy   JournalEntry?     @relation("Reversal")
+  lines        JournalLine[]
+  transactions BankTransaction[]
+
+  @@index([clientId, date])
+  @@index([clientId, source])
+}
+
+model JournalLine {
+  id             String @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  /// Exactly one of debitCents / creditCents is non-zero
+  debitCents     Int    @default(0)
+  creditCents    Int    @default(0)
+  gstCents       Int    @default(0)
+  /// The tax treatment in force when the line was posted. Snapshotted so a later
+  /// change to the account cannot rewrite a BAS that has already been prepared.
+  gstTreatment   GstTreatment?
+  description    String?
+  /// For TPAR: a payment to a subcontractor, when the line records one.
+  subcontractorId String?
+
+  entry         JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account       Account        @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  subcontractor Subcontractor? @relation(fields: [subcontractorId], references: [id], onDelete: SetNull)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([subcontractorId])
+}
+
+// ---------------------------------------------------------------------------
+// AI Memory — every human correction becomes a reusable rule
+// ---------------------------------------------------------------------------
+
+enum MatchType {
+  EXACT     // normalised description matches exactly
+  CONTAINS  // normalised description contains the pattern
+}
+
+model MemoryRule {
+  id           String       @id @default(cuid())
+  firmId       String
+  /// null = firm-wide rule ("remember for every client")
+  clientId     String?
+  matchType    MatchType    @default(CONTAINS)
+  pattern      String
+  accountId    String
+  gstTreatment GstTreatment
+  hitCount     Int          @default(0)
+  /// How many human corrections taught this rule. Repeats raise confidence.
+  evidenceCount Int         @default(1)
+  createdById  String?
+  createdAt    DateTime     @default(now())
+  lastUsedAt   DateTime?
+
+  firm         Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  client       Client?           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  account      Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@unique([firmId, clientId, pattern])
+  @@index([firmId])
+  @@index([clientId])
+}
+
+// ---------------------------------------------------------------------------
+// Registers — prerequisites for the specialist reports
+// ---------------------------------------------------------------------------
+
+enum DepreciationMethod {
+  PRIME_COST
+  DIMINISHING_VALUE
+}
+
+/// A depreciable asset. Depreciation is computed by the schedule report from
+/// these facts and is never stored as a figure — a rule change must reproduce.
+model Asset {
+  id                     String             @id @default(cuid())
+  clientId               String
+  name                   String
+  description            String?
+  costCents              Int
+  purchaseDate           DateTime
+  method                 DepreciationMethod @default(DIMINISHING_VALUE)
+  /// Effective life in months, so a 2.5-year life is exact.
+  effectiveLifeMonths    Int
+  /// Share of use that is private, in basis points (10000 = 100%).
+  privateUseBasisPoints  Int                @default(0)
+  /// A car, for the car limit on depreciation — applied only once the rule is verified.
+  isCar                  Boolean            @default(false)
+  /// The balance-sheet account the asset sits in, when linked.
+  accountId              String?
+  disposedAt             DateTime?
+  disposalCents          Int?
+  createdAt              DateTime           @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+enum LoanFrequency {
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+}
+
+enum LoanStatus {
+  ACTIVE
+  CLOSED
+}
+
+/// A loan facility. Repayments split principal from interest; the schedule
+/// report derives the split from these terms.
+model Loan {
+  id                     String        @id @default(cuid())
+  clientId               String
+  lender                 String
+  description            String?
+  principalCents         Int
+  /// Annual rate in basis points: 725 = 7.25% p.a.
+  interestRateBasisPoints Int
+  startDate              DateTime
+  termMonths             Int
+  repaymentCents         Int
+  frequency              LoanFrequency @default(MONTHLY)
+  status                 LoanStatus    @default(ACTIVE)
+  /// The liability account the principal sits in, when linked.
+  accountId              String?
+  createdAt              DateTime      @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+/// A contractor the client pays. The TPAR is a sum of payments per row here.
+model Subcontractor {
+  id        String   @id @default(cuid())
+  clientId  String
+  name      String
+  abn       String?
+  email     String?
+  phone     String?
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  client       Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lines        JournalLine[]
+  transactions BankTransaction[]
+
+  @@index([clientId])
+}
+
+enum FeedRequestStatus {
+  PENDING
+  CONNECTED
+  DECLINED
+  EXPIRED
+}
+
+/// A request sent to the client to connect a live bank feed. The connection
+/// itself needs an accredited data recipient; this records the ask and the
+/// answer.
+model BankFeedRequest {
+  id          String            @id @default(cuid())
+  clientId    String
+  email       String
+  tokenHash   String            @unique
+  status      FeedRequestStatus @default(PENDING)
+  sentAt      DateTime          @default(now())
+  expiresAt   DateTime
+  respondedAt DateTime?
+  /// The consent the client's approval produced, once they finish at the bank.
+  connectionId String?
+  createdAt   DateTime          @default(now())
+
+  client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  connection BankFeedConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([connectionId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit — append-only. Rows are never updated or deleted.
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  firmId     String
+  userId     String?
+  clientId   String?
+  /// e.g. JOURNAL_POSTED, JOURNAL_REVERSED, ACCOUNT_CREATED, PARTNERS_UPDATED
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  firm Firm  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([firmId, createdAt])
+  @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Jobs — every long-running operation, with its stages persisted
+// ---------------------------------------------------------------------------
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  /// Retries exhausted. Visible, retryable by a person, never silently lost.
+  DEAD
+}
+
+model Job {
+  id             String    @id @default(cuid())
+  firmId         String
+  clientId       String?
+  /// e.g. IMPORT_STATEMENT, RECONCILE_CLIENT, SYNC_BANK_FEED
+  type           String
+  status         JobStatus @default(QUEUED)
+  progress       Int       @default(0)
+  currentStage   String?
+  /// What the job works on — an import id, a client id.
+  inputReference String?
+  /// Idempotency: the same key never enqueues twice.
+  idempotencyKey String    @unique
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3)
+  errorCode      String?
+  errorMessage   String?
+  createdById    String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  firm   Firm       @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  events JobEvent[]
+
+  @@index([firmId, createdAt])
+  @@index([status])
+}
+
+model JobEvent {
+  id        String   @id @default(cuid())
+  jobId     String
+  stage     String
+  processed Int      @default(0)
+  total     Int      @default(0)
+  message   String?
+  createdAt DateTime @default(now())
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Live bank feeds — through an accredited data recipient
+// ---------------------------------------------------------------------------
+
+enum FeedConnectionStatus {
+  /// Auth session created; the client has not finished at their bank yet.
+  PENDING
+  ACTIVE
+  /// The CDR consent reached its end date without being renewed.
+  EXPIRED
+  REVOKED
+  ERROR
+}
+
+/// One CDR consent — one "arrangement" in Consumer Data Right language.
+///
+/// A client may hold several: one per institution, and a new one each time an
+/// expiring consent is re-authorised. The consent, not the connection row, is
+/// the authority: `refreshFeedConnections` reconciles these rows against the
+/// provider's list rather than trusting local state.
+///
+/// Consents are never deleted. A revoked consent stays as the record of what
+/// data was lawfully collected, and when that permission ended.
+model BankFeedConnection {
+  id                   String               @id @default(cuid())
+  clientId             String
+  provider             String
+  /// The client's id at the provider. Mirrors `Client.feedEndUserId`.
+  externalUserId       String
+  /// The provider's consent id.
+  externalConnectionId String?
+  /// The CDR arrangement id — what a revocation is addressed to. Usually the
+  /// same value as the consent id, but the provider does not guarantee it.
+  arrangementId        String?
+  institutionId        String?
+  institutionName      String?
+  status               FeedConnectionStatus @default(PENDING)
+
+  /// The short-lived auth session handed to the browser to open the consent
+  /// flow. Not a credential by itself: it authorises nothing without the
+  /// client completing authentication at their own bank.
+  authSessionId        String?              @unique
+  authSessionExpiresAt DateTime?
+
+  consentedAt          DateTime?
+  /// When the CDR consent lapses. The client must re-authorise before this.
+  expiresAt            DateTime?
+  revokedAt            DateTime?
+
+  lastSyncedAt         DateTime?
+  lastError            String?
+  createdAt            DateTime             @default(now())
+
+  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  bankAccounts BankAccount[]
+  syncRuns     FeedSyncRun[]
+  requests     BankFeedRequest[]
+
+  @@unique([provider, externalConnectionId])
+  @@index([clientId])
+  @@index([status])
+}
+
+/// One attempt to pull transactions from a consent, whatever triggered it.
+///
+/// Separate from `Job` on purpose: a Job is the unit of *work* the Activity
+/// Panel shows, this is the *accounting* record of what data arrived and when.
+/// An auditor asking "where did this transaction come from, and when did we
+/// receive it" is answered from here.
+model FeedSyncRun {
+  id            String    @id @default(cuid())
+  clientId      String
+  connectionId  String?
+  /// WEBHOOK | MANUAL | BACKFILL
+  trigger       String
+  /// The provider event that caused it, for a webhook-triggered run.
+  event         String?
+  /// RUNNING | OK | ERROR
+  status        String    @default("RUNNING")
+  pagesFetched  Int       @default(0)
+  rowsInserted  Int       @default(0)
+  rowsUpdated   Int       @default(0)
+  error         String?
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+
+  client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  connection BankFeedConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+
+  @@index([clientId, startedAt])
+  @@index([connectionId])
+}
+
+// ---------------------------------------------------------------------------
+// Tax rules — versioned, never updated in place, verified by the advisor
+// ---------------------------------------------------------------------------
+
+enum TaxRuleStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  SUPERSEDED
+}
+
+/// A tax rule the software depends on, as a dated version. A figure with no
+/// value has not been supplied by the registered tax advisor and is not
+/// applied. Platform-wide (`firmId` null): tax law does not vary by firm.
+model TaxRuleVersion {
+  id            String        @id @default(cuid())
+  /// e.g. INSTANT_ASSET_WRITE_OFF, CAR_LIMIT, BAS_W1_ACCOUNTS
+  code          String
+  label         String
+  description   String?
+  /// Integer cents where the rule is an amount.
+  valueCents    Int?
+  /// Free text where the rule is a mapping or a choice.
+  valueText     String?
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  status        TaxRuleStatus @default(PENDING_VERIFICATION)
+  note          String?
+  verifiedById  String?
+  verifiedAt    DateTime?
+  createdAt     DateTime      @default(now())
+
+  verifiedBy User? @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([code, effectiveFrom])
+}
+
+/// A provider webhook event we have accepted. Its presence is the replay
+/// guard: an event id seen twice is acknowledged and ignored.
+///
+/// `id` is the provider's own message id, so the unique constraint — not
+/// application logic — is what makes redelivery a no-op. Fiskil retries up to
+/// five times with backoff, so redelivery is the norm, not the exception.
+///
+/// The payload is kept for feed events because it is the only evidence of what
+/// the provider asserted, and `processedAt` / `error` make a stuck event
+/// visible instead of silently lost.
+model WebhookEvent {
+  id          String    @id
+  provider    String
+  type        String
+  /// Provider-side subject, so an event can be traced to a client without
+  /// re-parsing the payload.
+  externalUserId String?
+  externalConnectionId String?
+  payload     Json?
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  error       String?
+
+  @@index([provider, receivedAt])
+  @@index([processedAt])
+}

@@ -1,0 +1,13 @@
+{
+  // Standalone typecheck of the backend: pnpm --filter @ledgerly/server typecheck
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/server/*": ["./src/*"],
+      "@/shared/*": ["./src/shared/*"],
+      "@/generated/*": ["./generated/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "prisma/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "generated"]
+}

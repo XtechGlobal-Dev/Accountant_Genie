@@ -1,0 +1,56 @@
+{
+  "name": "ledgerly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:app": "next dev",
+    "dev:fast": "node scripts/dev.mjs --skip-db",
+    "build": "pnpm --filter @ledgerly/server generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit -p .",
+    "bootstrap": "pnpm --filter @ledgerly/server bootstrap",
+    "db:push": "pnpm --filter @ledgerly/server db:push",
+    "db:seed": "pnpm --filter @ledgerly/server db:seed",
+    "db:reset": "pnpm --filter @ledgerly/server db:reset",
+    "db:check": "pnpm --filter @ledgerly/server db:check",
+    "db:studio": "pnpm --filter @ledgerly/server db:studio",
+    "db:constraints": "pnpm --filter @ledgerly/server db:constraints",
+    "db:purge-demo": "pnpm --filter @ledgerly/server db:purge-demo",
+    "ai:models": "pnpm --filter @ledgerly/server ai:models",
+    "worker": "pnpm --filter @ledgerly/server worker",
+    "test": "pnpm --filter @ledgerly/server test",
+    "test:watch": "pnpm --filter @ledgerly/server test:watch",
+    "test:idor": "pnpm --filter @ledgerly/server test:idor",
+    "fiskil:check": "pnpm --filter @ledgerly/server fiskil:check"
+  },
+  "dependencies": {
+    "@fiskil/link": "0.1.10",
+    "@ledgerly/server": "workspace:*",
+    "client-only": "0.0.1",
+    "lucide-react": "1.41.0",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "esbuild",
+      "msgpackr-extract",
+      "prisma"
+    ]
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.4",
+    "playwright": "^1.62.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3"
+  }
+}

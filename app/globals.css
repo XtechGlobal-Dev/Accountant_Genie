@@ -1,0 +1,513 @@
+@import "tailwindcss";
+
+/**
+ * Design tokens — "clear blue".
+ *
+ * A cool, airy ground with white cards lifted on soft shadows; a deep navy
+ * sidebar; and one accent — a confident blue — spent on primary actions,
+ * the active state and the glow behind them. Headings are
+ * bold and tight; figures are tabular. Colour is generous but semantic:
+ * green means money in and success, red money out and danger, amber
+ * attention — never the accent, which means "interactive".
+ */
+@theme {
+  /* Ground and surfaces */
+  --color-ground: #f5f7fb;
+  --color-surface: #ffffff;
+  --color-surface-2: #f8fafe;
+  --color-sunken: #edf1f8;
+
+  /* Type */
+  --color-ink: #0f172a;
+  --color-ink-2: #4b5675;
+  --color-ink-3: #8a94ad;
+
+  /* Rules */
+  --color-rule: #e4e9f2;
+  --color-rule-soft: #eef2f8;
+  --color-rule-strong: #c9d2e3;
+
+  /* Accent — clear blue */
+  --color-accent: #2563eb;
+  --color-accent-2: #60a5fa;
+  --color-accent-soft: #e8f0ff;
+  --color-accent-ink: #1d4ed8;
+
+  /* Semantic */
+  --color-positive: #12b76a;
+  --color-positive-soft: #e7f8f0;
+  --color-negative: #f04461;
+  --color-negative-soft: #fdecef;
+  --color-warning: #f59e0b;
+  --color-warning-soft: #fff4e0;
+  --color-positive-ink: #067647;
+  --color-negative-ink: #b42345;
+  --color-warning-ink: #b45309;
+
+  /* The dark chrome: sidebar, sign-in panel, hero band */
+  --color-sidebar: #0b1739;
+  --color-sidebar-2: #14245a;
+  --color-sidebar-text: #aab7da;
+  --color-sidebar-muted: #6b7aa8;
+  --color-sidebar-rule: rgba(255, 255, 255, 0.08);
+
+  /* Shape */
+  --radius-card: 1.25rem;
+  --radius-control: 0.75rem;
+
+  /* Elevation */
+  --shadow-xs: 0 1px 2px rgba(15, 19, 48, 0.05);
+  --shadow-card: 0 1px 2px rgba(15, 19, 48, 0.03), 0 10px 30px -14px rgba(15, 19, 48, 0.12);
+  --shadow-card-hover: 0 2px 4px rgba(15, 19, 48, 0.04), 0 22px 48px -18px rgba(37, 99, 235, 0.22);
+  --shadow-pop: 0 8px 20px -8px rgba(15, 19, 48, 0.15), 0 32px 80px -24px rgba(15, 19, 48, 0.35);
+  --shadow-glow: 0 10px 24px -10px rgba(37, 99, 235, 0.55);
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+}
+
+/* Fonts are self-hosted through next/font, which writes these variables onto
+   <html>. Plus Jakarta Sans carries the interface and the headings; figures
+   are set in Geist, which has true tabular numerals; codes in Geist Mono. */
+@theme inline {
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-figures: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    background: var(--color-ground);
+    color: var(--color-ink);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  svg {
+    flex-shrink: 0;
+  }
+
+  /* Page titles: bold, tight. */
+  .display {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+
+  .figure {
+    font-family: var(--font-figures);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .code {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.75rem;
+  }
+
+  /* A card: white, lifted, generously rounded. */
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .sheet {
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+
+  .sheet table,
+  .card table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .sheet thead th,
+  .card thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-surface-2);
+    border-bottom: 1px solid var(--color-rule);
+    padding: 0.7rem 1.25rem;
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    white-space: nowrap;
+  }
+
+  .sheet tbody td,
+  .card tbody td {
+    padding: 0.85rem 1.25rem;
+    border-bottom: 1px solid var(--color-rule-soft);
+    vertical-align: middle;
+  }
+
+  .sheet tbody tr:last-child td,
+  .card tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* Dates and amounts never wrap inside a column. */
+  .sheet td.figure,
+  .card td.figure,
+  .sheet th.figure,
+  .card th.figure {
+    white-space: nowrap;
+  }
+
+  .sheet tbody tr:hover td,
+  .card tbody tr:hover td {
+    background: color-mix(in oklab, var(--color-accent-soft) 55%, transparent);
+  }
+
+  .sheet tbody th.group-row,
+  .card tbody th.group-row {
+    background: var(--color-surface-2);
+    border-top: 1px solid var(--color-rule-soft);
+    border-bottom: 1px solid var(--color-rule-soft);
+    padding: 0.4rem 1.25rem;
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-accent-ink);
+  }
+
+  .sheet tfoot td,
+  .card tfoot td {
+    padding: 0.85rem 1.25rem;
+    background: var(--color-surface-2);
+    border-top: 1px solid var(--color-rule);
+    font-weight: 700;
+  }
+
+  .stack-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 0.5rem;
+  }
+
+  .stack-table thead th {
+    padding: 0 1.25rem 0.25rem;
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    white-space: nowrap;
+  }
+
+  .stack-table tbody td {
+    background: var(--color-surface);
+    padding: 1rem 1.25rem;
+    border-top: 1px solid var(--color-rule);
+    border-bottom: 1px solid var(--color-rule);
+    vertical-align: middle;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .stack-table tbody td:first-child {
+    border-left: 1px solid var(--color-rule);
+    border-radius: var(--radius-control) 0 0 var(--radius-control);
+  }
+
+  .stack-table tbody td:last-child {
+    border-right: 1px solid var(--color-rule);
+    border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  }
+
+  .stack-table tbody tr:hover td {
+    border-color: var(--color-accent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 145, 179, 0.4) transparent;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* The accent gradient — primary buttons, the brand mark, active items. */
+@utility bg-accent-gradient {
+  background-image: linear-gradient(135deg, #3b82f6 0%, #2563eb 60%, #1d4ed8 100%);
+}
+
+@utility text-accent-gradient {
+  background-image: linear-gradient(135deg, #60a5fa 0%, #2563eb 70%, #1d4ed8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Soft colour fields for hero bands and the sign-in panel. */
+@utility bg-mesh {
+  background-image:
+    radial-gradient(60% 80% at 15% 20%, rgba(59, 130, 246, 0.55), transparent 60%),
+    radial-gradient(50% 70% at 85% 15%, rgba(14, 165, 233, 0.4), transparent 55%),
+    radial-gradient(60% 60% at 65% 95%, rgba(99, 102, 241, 0.3), transparent 55%);
+}
+
+@utility bg-mesh-light {
+  background-image:
+    radial-gradient(50% 60% at 10% 10%, rgba(59, 130, 246, 0.1), transparent 60%),
+    radial-gradient(40% 50% at 90% 20%, rgba(14, 165, 233, 0.08), transparent 55%),
+    radial-gradient(50% 50% at 60% 100%, rgba(99, 102, 241, 0.08), transparent 55%);
+}
+
+/* The light hero band on the home screen: pale blue, dark type. */
+@utility bg-hero-light {
+  background-image:
+    radial-gradient(60% 100% at 100% 0%, rgba(147, 197, 253, 0.55), transparent 60%),
+    radial-gradient(40% 80% at 70% 100%, rgba(191, 219, 254, 0.6), transparent 60%),
+    linear-gradient(135deg, #eef4ff 0%, #e2ecff 55%, #d6e4ff 100%);
+}
+
+/* The faint rule grid over dark panels. */
+@utility bg-ledger-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 2.5rem 2.5rem;
+}
+
+@utility glass {
+  background-color: color-mix(in oklab, var(--color-surface) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+@keyframes float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@utility animate-pop-in {
+  animation: pop-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@utility animate-fade-in {
+  animation: fade-in 0.15s ease-out both;
+}
+
+/* `backwards`, not `both`: once finished the element returns to its untouched
+   styles, so it is not a containing block for fixed descendants. */
+@utility animate-rise-in {
+  animation: rise-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+@utility animate-orb-spin {
+  animation: orb-spin 9s linear infinite;
+}
+
+@utility animate-pulse-ring {
+  animation: pulse-ring 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+@utility animate-float {
+  animation: float-y 6s ease-in-out infinite;
+}
+
+@utility animate-pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* Printing a report: the chrome goes, the paper stays white, cards lie flat. */
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  aside,
+  nav[aria-label="Breadcrumb"],
+  [data-print-hide] {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  .card,
+  .sheet {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  .animate-rise-in,
+  .animate-pop-in,
+  .animate-fade-in {
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The hero band keeps dark type on a pale field in light mode; in dark mode it
+   becomes a deep navy field so the same ink tokens stay readable. */
+:root[data-theme="dark"] .bg-hero-light {
+  background-image:
+    radial-gradient(60% 100% at 100% 0%, rgba(59, 130, 246, 0.35), transparent 60%),
+    radial-gradient(40% 80% at 70% 100%, rgba(37, 99, 235, 0.25), transparent 60%),
+    linear-gradient(135deg, #111c3f 0%, #0f1a38 55%, #0c1530 100%);
+}
+:root[data-theme="dark"] .hero-art {
+  opacity: 0.9;
+}
+
+/* ---------------------------------------------------------------------------
+   Dark theme. Only the tokens change; every component reads them.
+   --------------------------------------------------------------------------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-ground: #0a0f1f;
+  --color-surface: #111a30;
+  --color-surface-2: #16203a;
+  --color-sunken: #1c2742;
+
+  --color-ink: #eceefc;
+  --color-ink-2: #aab0d6;
+  --color-ink-3: #737aa8;
+
+  --color-rule: #262c55;
+  --color-rule-soft: #20264a;
+  --color-rule-strong: #363d6e;
+
+  --color-accent: #60a5fa;
+  --color-accent-2: #93c5fd;
+  --color-accent-soft: rgba(96, 165, 250, 0.16);
+  --color-accent-ink: #bfdbfe;
+
+  --color-positive: #34d399;
+  --color-positive-soft: rgba(52, 211, 153, 0.14);
+  --color-negative: #fb7185;
+  --color-negative-soft: rgba(251, 113, 133, 0.14);
+  --color-warning: #fbbf24;
+  --color-warning-soft: rgba(251, 191, 36, 0.14);
+  --color-positive-ink: #6ee7b7;
+  --color-negative-ink: #fda4af;
+  --color-warning-ink: #fcd34d;
+
+  --color-sidebar: #090c1f;
+  --color-sidebar-2: #12163a;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -16px rgba(0, 0, 0, 0.7);
+  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.35), 0 22px 48px -16px rgba(96, 165, 250, 0.35);
+  --shadow-pop: 0 8px 20px -8px rgba(0, 0, 0, 0.5), 0 32px 80px -24px rgba(0, 0, 0, 0.85);
+  --shadow-glow: 0 12px 28px -10px rgba(96, 165, 250, 0.6);
+}

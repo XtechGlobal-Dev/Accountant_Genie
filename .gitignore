@@ -1,0 +1,22 @@
+node_modules
+.next
+out
+.env
+server/.env
+.env*.local
+server/generated
+*.tsbuildinfo
+next-env.d.ts
+.cache/
+
+# Uploaded statements kept for audit (prototype: local disk)
+storage/
+
+# Local env backups (may contain live credentials)
+.env.*
+!.env.example
+server/.env.*
+!server/.env.example
+
+# npm lockfile — this is a pnpm workspace
+package-lock.json

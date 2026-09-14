@@ -1,0 +1,20 @@
+packages:
+  - '.'
+  - 'server'
+
+# Peers (next, react) are provided by the root frontend package. Auto-installing
+# them would give server/ its own copy and two module identities in one process.
+autoInstallPeers: false
+
+# Build approvals and peer settings are duplicated here for pnpm 11, which reads
+# them from this file. They are NOT the source of truth: pnpm 10.0-10.5 ignores
+# this file's settings entirely, so the versions that actually run are driven by
+# .npmrc (auto-install-peers) and package.json -> pnpm.onlyBuiltDependencies.
+# Change those first, then mirror the change here.
+#
+# Prisma needs its engines, esbuild and msgpackr their native binaries.
+allowBuilds:
+  '@prisma/engines': true
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true

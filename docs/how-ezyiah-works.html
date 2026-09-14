@@ -1,0 +1,1218 @@
+<title>Inside Ezyiah</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* ---------------------------------------------------------------------
+     Tokens. Light is the complete set on bare :root so the un-stamped
+     (system) state always resolves. Dark redefines only tokens, twice, so
+     both an OS preference and an explicit toggle win in either direction.
+     --------------------------------------------------------------------- */
+  :root {
+    --paper:      #f8f9fb;
+    --surface:    #ffffff;
+    --surface-2:  #f1f4f7;
+    --ink:        #111820;
+    --ink-2:      #3c4956;
+    --ink-3:      #6b7885;
+    --rule:       #dbe1e8;
+    --rule-soft:  #e8ecf1;
+
+    --accent:     #124e66;   /* deep petrol — the single accent */
+    --accent-2:   #1d7f96;
+    --accent-wash:#e4eff3;
+
+    --flag:       #a9601a;   /* semantic: needs review */
+    --flag-wash:  #f8efe2;
+    --good:       #2e6b4f;   /* semantic: reviewed / confirmed */
+    --good-wash:  #e5efe9;
+
+    --shadow: 0 1px 2px rgba(17, 24, 32, .05), 0 8px 24px -12px rgba(17, 24, 32, .12);
+
+    --measure: 68ch;
+    --serif: "Newsreader", ui-serif, Georgia, serif;
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0d1218;
+      --surface:    #131b23;
+      --surface-2:  #1a242e;
+      --ink:        #e9eef3;
+      --ink-2:      #b3c0cc;
+      --ink-3:      #7e8d9b;
+      --rule:       #27333f;
+      --rule-soft:  #1e2831;
+
+      --accent:     #5fb3cc;
+      --accent-2:   #8fd0e2;
+      --accent-wash:#16303b;
+
+      --flag:       #d99b4c;
+      --flag-wash:  #332614;
+      --good:       #6fbf95;
+      --good-wash:  #16281f;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0d1218;
+    --surface:    #131b23;
+    --surface-2:  #1a242e;
+    --ink:        #e9eef3;
+    --ink-2:      #b3c0cc;
+    --ink-3:      #7e8d9b;
+    --rule:       #27333f;
+    --rule-soft:  #1e2831;
+
+    --accent:     #5fb3cc;
+    --accent-2:   #8fd0e2;
+    --accent-wash:#16303b;
+
+    --flag:       #d99b4c;
+    --flag-wash:  #332614;
+    --good:       #6fbf95;
+    --good-wash:  #16281f;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ------------------------------------------------- ledger margin rule */
+  .sheet {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 clamp(1rem, 4vw, 3.5rem);
+  }
+
+  .body-col {
+    max-width: var(--measure);
+  }
+
+  /* ------------------------------------------------------------ masthead */
+  header.masthead {
+    border-bottom: 1px solid var(--rule);
+    padding: clamp(3rem, 8vw, 6rem) 0 clamp(2rem, 4vw, 3rem);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .6875rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1.25rem;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(2.5rem, 7vw, 4.25rem);
+    line-height: 1.02;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+    margin: 0 0 1.25rem;
+  }
+
+  .standfirst {
+    font-family: var(--serif);
+    font-size: clamp(1.125rem, 2.2vw, 1.375rem);
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 54ch;
+    margin: 0 0 2rem;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem 2.5rem;
+    font-family: var(--mono);
+    font-size: .75rem;
+    color: var(--ink-3);
+  }
+  .meta-row b {
+    display: block;
+    font-weight: 500;
+    color: var(--ink);
+    letter-spacing: 0;
+  }
+
+  /* ------------------------------------------------------------ sections */
+  section {
+    padding: clamp(2.75rem, 6vw, 4.5rem) 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  section:last-of-type { border-bottom: 0; }
+
+  .sec-head {
+    display: flex;
+    gap: 1.25rem;
+    align-items: baseline;
+    margin-bottom: 1.5rem;
+  }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: .75rem;
+    color: var(--accent);
+    padding-top: .35rem;
+    flex: none;
+    width: 2.5rem;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(1.6rem, 3.4vw, 2.25rem);
+    line-height: 1.15;
+    letter-spacing: -.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: .8125rem;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 2.5rem 0 .75rem;
+  }
+
+  p { margin: 0 0 1.1rem; }
+  .body-col > p:last-child { margin-bottom: 0; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  strong { font-weight: 600; }
+  code, .m {
+    font-family: var(--mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    padding: .1em .35em;
+    border-radius: 3px;
+  }
+
+  ul, ol { margin: 0 0 1.1rem; padding-left: 1.25rem; }
+  li { margin-bottom: .45rem; }
+  li::marker { color: var(--ink-3); }
+
+  /* -------------------------------------------------------------- figures */
+  figure {
+    margin: 2.25rem 0;
+    padding: 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 560px;
+    color: var(--ink-2);
+  }
+  figcaption {
+    margin-top: 1.1rem;
+    padding-top: .9rem;
+    border-top: 1px solid var(--rule-soft);
+    font-size: .8125rem;
+    line-height: 1.55;
+    color: var(--ink-3);
+    max-width: 72ch;
+  }
+  figcaption b { color: var(--ink-2); font-weight: 600; }
+
+  /* svg helper classes */
+  .n-box  { fill: var(--surface-2); stroke: currentColor; stroke-width: 1; }
+  .n-acc  { fill: var(--accent-wash); stroke: var(--accent); stroke-width: 1.25; }
+  .n-flag { fill: var(--flag-wash); stroke: var(--flag); stroke-width: 1.25; }
+  .n-good { fill: var(--good-wash); stroke: var(--good); stroke-width: 1.25; }
+  .lbl    { font-family: var(--sans); font-size: 12px; fill: var(--ink); }
+  .lbl-s  { font-family: var(--sans); font-size: 10.5px; fill: var(--ink-3); }
+  .lbl-m  { font-family: var(--mono); font-size: 11px; fill: var(--ink-2); }
+  .lbl-t  { font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: .08em; fill: var(--ink-3); }
+  .edge   { stroke: currentColor; stroke-width: 1.25; fill: none; }
+  .edge-acc { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+  .edge-dash { stroke: var(--ink-3); stroke-width: 1.25; fill: none; stroke-dasharray: 4 3; }
+
+  /* --------------------------------------------------------------- tables */
+  .tbl-wrap { overflow-x: auto; margin: 1.75rem 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .8125rem;
+    font-variant-numeric: tabular-nums;
+    min-width: 520px;
+  }
+  th {
+    text-align: left;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: .6875rem;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: .5rem .75rem;
+    border-bottom: 1.5px solid var(--rule);
+    white-space: nowrap;
+  }
+  td {
+    padding: .55rem .75rem;
+    border-bottom: 1px solid var(--rule-soft);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+  td:first-child { color: var(--ink); font-weight: 500; }
+  td .m { background: none; padding: 0; }
+
+  /* ---------------------------------------------------------------- notes */
+  .callout {
+    margin: 1.75rem 0;
+    padding: 1.1rem 1.25rem;
+    border-left: 3px solid var(--flag);
+    background: var(--flag-wash);
+    border-radius: 0 6px 6px 0;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .tag {
+    display: block;
+    font-family: var(--mono);
+    font-size: .6875rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--flag);
+    margin-bottom: .4rem;
+  }
+
+  .callout.neutral {
+    border-left-color: var(--accent);
+    background: var(--accent-wash);
+  }
+  .callout.neutral .tag { color: var(--accent); }
+
+  /* ------------------------------------------------------------ key line */
+  .keyline {
+    font-family: var(--serif);
+    font-size: clamp(1.25rem, 2.6vw, 1.6rem);
+    line-height: 1.35;
+    color: var(--ink);
+    border-left: 3px solid var(--accent);
+    padding: .35rem 0 .35rem 1.5rem;
+    margin: 2rem 0;
+    max-width: 46ch;
+    text-wrap: balance;
+  }
+
+  /* -------------------------------------------------------------- stages */
+  .stage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 1.75rem 0;
+  }
+  .stage {
+    background: var(--surface);
+    padding: 1rem 1.1rem;
+  }
+  .stage .k {
+    font-family: var(--mono);
+    font-size: .6875rem;
+    color: var(--accent);
+    display: block;
+    margin-bottom: .35rem;
+  }
+  .stage .t { font-weight: 600; font-size: .875rem; display: block; margin-bottom: .3rem; }
+  .stage .d { font-size: .8125rem; color: var(--ink-3); line-height: 1.45; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 2.5rem 0 4rem;
+    font-size: .8125rem;
+    color: var(--ink-3);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    a { transition: color .15s ease; }
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow">Competitive teardown · from public documentation</p>
+    <h1>Inside Ezyiah</h1>
+    <p class="standfirst">
+      How an Australian AI bookkeeping platform turns a raw bank statement into a
+      BAS an accountant will sign — and where the machine actually does the work.
+    </p>
+    <div class="meta-row">
+      <span><b>Prepared</b>4 September 2026</span>
+      <span><b>Sources</b>30 public help articles · marketing site · free-tier UI</span>
+      <span><b>Purpose</b>Build reference for an independent implementation</span>
+    </div>
+  </header>
+
+  <!-- ==================================================== 1 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>What the product actually is</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Ezyiah is a multi-tenant SaaS for Australian accounting firms and bookkeepers.
+        A firm holds many clients; each client has bank accounts, a chart of accounts,
+        a ledger and a set of reports. Bank data arrives either through a live Open
+        Banking feed or as an uploaded PDF/CSV statement.
+      </p>
+      <p>
+        The claim it sells on is narrow and specific: the coding work that consumes
+        the first week of every month happens without anyone doing it, and the
+        accountant's job shifts from <em>producing</em> the books to <em>reviewing</em> them.
+      </p>
+      <p class="keyline">
+        It is not lodgement software. It prepares, reviews and exports — the ATO
+        submission stays with the agent.
+      </p>
+      <p>
+        That distinction matters commercially as well as legally: it keeps the product
+        clear of tax-agent regulation while still charging for the expensive part of
+        the work.
+      </p>
+    </div>
+  </section>
+
+  <!-- ==================================================== 2 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>The spine: statement to report</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Everything in the product hangs off one pipeline. Data enters from two
+        sources, passes through a cascade of increasingly expensive classifiers, and
+        forks on confidence: the machine keeps what it is sure about and hands the
+        rest to a human. Both paths converge on the same ledger.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 1140 430" role="img" aria-label="The reconciliation pipeline: bank feed and file upload merge, pass through normalise, deduplicate, memory, rules, AI and GST stages, then fork on confidence to either auto-process or a human review queue, with corrections feeding back into memory, before both paths post to the ledger and reports.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+          </marker>
+          <marker id="ar-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+          </marker>
+        </defs>
+
+        <!-- ingestion -->
+        <text class="lbl-t" x="16" y="26">INGESTION</text>
+        <rect class="n-box" x="16" y="42" width="132" height="42" rx="5"/>
+        <text class="lbl" x="82" y="60" text-anchor="middle">Live bank feed</text>
+        <text class="lbl-s" x="82" y="75" text-anchor="middle">CDR · daily sync</text>
+
+        <rect class="n-box" x="16" y="106" width="132" height="42" rx="5"/>
+        <text class="lbl" x="82" y="124" text-anchor="middle">File upload</text>
+        <text class="lbl-s" x="82" y="139" text-anchor="middle">PDF / CSV · 10 max</text>
+
+        <path class="edge" d="M148 63 H176 V95" marker-end="url(#ar)"/>
+        <path class="edge" d="M148 127 H176 V99" />
+
+        <!-- deterministic chain -->
+        <text class="lbl-t" x="196" y="26">DETERMINISTIC — CHEAP, RUNS FIRST</text>
+        <g>
+          <rect class="n-box" x="196" y="74" width="96" height="46" rx="5"/>
+          <text class="lbl" x="244" y="94" text-anchor="middle">Normalise</text>
+          <text class="lbl-s" x="244" y="109" text-anchor="middle">merchant</text>
+
+          <rect class="n-box" x="308" y="74" width="96" height="46" rx="5"/>
+          <text class="lbl" x="356" y="94" text-anchor="middle">Deduplicate</text>
+          <text class="lbl-s" x="356" y="109" text-anchor="middle">fingerprint</text>
+
+          <rect class="n-acc" x="420" y="74" width="96" height="46" rx="5"/>
+          <text class="lbl" x="468" y="94" text-anchor="middle">Memory</text>
+          <text class="lbl-s" x="468" y="109" text-anchor="middle">learned rules</text>
+
+          <rect class="n-acc" x="532" y="74" width="96" height="46" rx="5"/>
+          <text class="lbl" x="580" y="94" text-anchor="middle">Rules</text>
+          <text class="lbl-s" x="580" y="109" text-anchor="middle">transfers, fees</text>
+        </g>
+
+        <path class="edge" d="M292 97 H304" marker-end="url(#ar)"/>
+        <path class="edge" d="M404 97 H416" marker-end="url(#ar)"/>
+        <path class="edge" d="M516 97 H528" marker-end="url(#ar)"/>
+
+        <!-- AI -->
+        <text class="lbl-t" x="644" y="26">MODEL — ONLY THE REMAINDER</text>
+        <rect class="n-flag" x="644" y="74" width="104" height="46" rx="5"/>
+        <text class="lbl" x="696" y="94" text-anchor="middle">Classify</text>
+        <text class="lbl-s" x="696" y="109" text-anchor="middle">proposes only</text>
+        <path class="edge" d="M628 97 H640" marker-end="url(#ar)"/>
+
+        <rect class="n-box" x="764" y="74" width="96" height="46" rx="5"/>
+        <text class="lbl" x="812" y="94" text-anchor="middle">GST engine</text>
+        <text class="lbl-s" x="812" y="109" text-anchor="middle">deterministic</text>
+        <path class="edge" d="M748 97 H760" marker-end="url(#ar)"/>
+
+        <rect class="n-box" x="876" y="74" width="96" height="46" rx="5"/>
+        <text class="lbl" x="924" y="94" text-anchor="middle">Validate</text>
+        <text class="lbl-s" x="924" y="109" text-anchor="middle">accounting</text>
+        <path class="edge" d="M860 97 H872" marker-end="url(#ar)"/>
+
+        <!-- confidence fork -->
+        <path class="edge" d="M972 97 H1010" marker-end="url(#ar)"/>
+        <polygon class="n-acc" points="1062,66 1104,97 1062,128 1020,97"/>
+        <text class="lbl" x="1062" y="94" text-anchor="middle">score</text>
+        <text class="lbl-s" x="1062" y="108" text-anchor="middle">+ risk</text>
+
+        <!-- branches -->
+        <path class="edge-acc" d="M1062 128 V168 H700" marker-end="url(#ar-a)"/>
+        <text class="lbl-m" x="900" y="162" text-anchor="middle">high confidence, low risk</text>
+
+        <path class="edge-dash" d="M1020 97 H996 V222 H700" marker-end="url(#ar-d)"/>
+        <text class="lbl-m" x="900" y="216" text-anchor="middle">uncertain · large · novel</text>
+
+        <rect class="n-good" x="560" y="150" width="136" height="42" rx="5"/>
+        <text class="lbl" x="628" y="168" text-anchor="middle">Auto-processed</text>
+        <text class="lbl-s" x="628" y="183" text-anchor="middle">no human touch</text>
+
+        <rect class="n-flag" x="560" y="204" width="136" height="42" rx="5"/>
+        <text class="lbl" x="628" y="222" text-anchor="middle">Review queue</text>
+        <text class="lbl-s" x="628" y="237" text-anchor="middle">accountant decides</text>
+
+        <!-- correction loops back to memory -->
+        <path class="edge-acc" d="M560 225 H468 V126" marker-end="url(#ar-a)"/>
+        <text class="lbl-m" x="486" y="196">correction becomes a rule</text>
+
+        <!-- converge to ledger -->
+        <path class="edge" d="M628 192 V262" marker-end="url(#ar)"/>
+        <path class="edge" d="M628 246 V262"/>
+        <rect class="n-acc" x="540" y="266" width="176" height="48" rx="5"/>
+        <text class="lbl" x="628" y="286" text-anchor="middle">Double-entry ledger</text>
+        <text class="lbl-s" x="628" y="302" text-anchor="middle">the source of truth</text>
+
+        <path class="edge" d="M628 314 V346" marker-end="url(#ar)"/>
+        <rect class="n-box" x="452" y="350" width="352" height="46" rx="5"/>
+        <text class="lbl" x="628" y="369" text-anchor="middle">Reports</text>
+        <text class="lbl-s" x="628" y="385" text-anchor="middle">BAS · P&amp;L · Balance Sheet · Trial Balance · GL · TPAR · EOFY</text>
+      </svg>
+      <figcaption>
+        <b>The order is the product.</b> Cheap deterministic stages run before the
+        model, so only the genuinely ambiguous tail reaches it — that is what keeps
+        per-transaction cost viable at 600,000 transactions a year. The model
+        <em>proposes</em>; deterministic GST and accounting validation sit
+        downstream of it, and the confidence fork is what decides whether a human
+        ever sees the row. The feedback edge from review back into memory is the
+        loop the whole business model rests on.
+      </figcaption>
+    </figure>
+
+    <div class="body-col">
+      <p>
+        Two properties of this diagram are worth stating plainly, because they are
+        the difference between an accounting product and a chatbot with a spreadsheet.
+      </p>
+      <p>
+        <strong>The model never computes a number.</strong> It picks an account and a
+        tax code. GST is then derived deterministically from that tax code. An LLM
+        that calculates <span class="m">gross ÷ 11</span> is an LLM that will
+        eventually calculate it wrong, silently, on one transaction in ten thousand.
+      </p>
+      <p>
+        <strong>Nothing reaches the ledger unvalidated.</strong> Between the model and
+        the books sit checks that the account exists, belongs to this client, is
+        active, carries a legal tax treatment, and produces a balanced entry.
+      </p>
+    </div>
+  </section>
+
+  <!-- ==================================================== 3 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>How the data is organised</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Tenancy is two levels deep and everything hangs below it. A firm never sees
+        another firm's data; within a firm, a client is the unit of work — its own
+        workspace, own ledger, own reports.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 1000 340" role="img" aria-label="Data hierarchy: a firm contains users and clients; each client has a business entity, bank accounts holding transactions, a chart of accounts, journals, coding memory, and reports.">
+        <defs>
+          <marker id="tr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect class="n-acc" x="400" y="14" width="200" height="46" rx="5"/>
+        <text class="lbl" x="500" y="33" text-anchor="middle">Firm</text>
+        <text class="lbl-s" x="500" y="49" text-anchor="middle">the tenant boundary</text>
+
+        <path class="edge" d="M500 60 V86 H250 V106" marker-end="url(#tr)"/>
+        <path class="edge" d="M500 86 H660 V106" marker-end="url(#tr)"/>
+
+        <rect class="n-box" x="176" y="108" width="148" height="40" rx="5"/>
+        <text class="lbl" x="250" y="126" text-anchor="middle">Users</text>
+        <text class="lbl-s" x="250" y="140" text-anchor="middle">roles &amp; permissions</text>
+
+        <rect class="n-acc" x="586" y="108" width="148" height="40" rx="5"/>
+        <text class="lbl" x="660" y="126" text-anchor="middle">Clients</text>
+        <text class="lbl-s" x="660" y="140" text-anchor="middle">one workspace each</text>
+
+        <!-- client children -->
+        <path class="edge" d="M660 148 V172" marker-end="url(#tr)"/>
+        <line class="edge" x1="80" y1="172" x2="940" y2="172"/>
+
+        <g>
+          <path class="edge" d="M80 172 V196" marker-end="url(#tr)"/>
+          <rect class="n-box" x="16" y="198" width="128" height="42" rx="5"/>
+          <text class="lbl" x="80" y="216" text-anchor="middle">Business entity</text>
+          <text class="lbl-s" x="80" y="231" text-anchor="middle">1 of 5 types</text>
+
+          <path class="edge" d="M224 172 V196" marker-end="url(#tr)"/>
+          <rect class="n-box" x="160" y="198" width="128" height="42" rx="5"/>
+          <text class="lbl" x="224" y="216" text-anchor="middle">Bank accounts</text>
+          <text class="lbl-s" x="224" y="231" text-anchor="middle">feed or manual</text>
+
+          <path class="edge" d="M368 172 V196" marker-end="url(#tr)"/>
+          <rect class="n-box" x="304" y="198" width="128" height="42" rx="5"/>
+          <text class="lbl" x="368" y="216" text-anchor="middle">Chart of accounts</text>
+          <text class="lbl-s" x="368" y="231" text-anchor="middle">system + custom</text>
+
+          <path class="edge" d="M512 172 V196" marker-end="url(#tr)"/>
+          <rect class="n-acc" x="448" y="198" width="128" height="42" rx="5"/>
+          <text class="lbl" x="512" y="216" text-anchor="middle">Journals</text>
+          <text class="lbl-s" x="512" y="231" text-anchor="middle">the ledger</text>
+
+          <path class="edge" d="M656 172 V196" marker-end="url(#tr)"/>
+          <rect class="n-box" x="592" y="198" width="128" height="42" rx="5"/>
+          <text class="lbl" x="656" y="216" text-anchor="middle">Coding memory</text>
+          <text class="lbl-s" x="656" y="231" text-anchor="middle">client-scoped</text>
+
+          <path class="edge" d="M800 172 V196" marker-end="url(#tr)"/>
+          <rect class="n-box" x="736" y="198" width="128" height="42" rx="5"/>
+          <text class="lbl" x="800" y="216" text-anchor="middle">Assets · Loans</text>
+          <text class="lbl-s" x="800" y="231" text-anchor="middle">registers</text>
+
+          <path class="edge" d="M920 172 V196" marker-end="url(#tr)"/>
+          <rect class="n-box" x="872" y="198" width="112" height="42" rx="5"/>
+          <text class="lbl" x="928" y="216" text-anchor="middle">Reports</text>
+          <text class="lbl-s" x="928" y="231" text-anchor="middle">derived</text>
+        </g>
+
+        <!-- transactions under bank accounts -->
+        <path class="edge" d="M224 240 V266" marker-end="url(#tr)"/>
+        <rect class="n-box" x="160" y="268" width="128" height="40" rx="5"/>
+        <text class="lbl" x="224" y="286" text-anchor="middle">Transactions</text>
+        <text class="lbl-s" x="224" y="300" text-anchor="middle">the raw rows</text>
+
+        <path class="edge-dash" d="M288 288 H512 V242" marker-end="url(#ar-d)"/>
+        <text class="lbl-m" x="330" y="282">post to</text>
+      </svg>
+      <figcaption>
+        <b>A firm-scoped tree, with one bridge.</b> The dashed edge is the important
+        one: transactions do not <em>become</em> reports, they <em>post to</em> the
+        ledger, and reports read only the ledger. That indirection is what keeps a
+        P&amp;L, a trial balance and a BAS agreeing with each other.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ==================================================== 4 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2>Entity type is not a dropdown</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        The single most consequential field in client setup is the business entity.
+        It changes which fields the form shows, and it changes which equity accounts
+        the client's chart of accounts is built with. Choosing wrong and discovering
+        it after transactions are posted is an expensive mistake.
+      </p>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Entity</th>
+            <th>Extra fields captured</th>
+            <th>Equity structure generated</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Company</td>
+            <td>Income tax rate <span class="m">(default 25%)</span>, total shares, value per share</td>
+            <td>Share capital and company equity accounts</td>
+          </tr>
+          <tr>
+            <td>Unit Trust</td>
+            <td>Total units, value per unit</td>
+            <td>Unit-holder equity — the trust analogue of share capital</td>
+          </tr>
+          <tr>
+            <td>Partnership</td>
+            <td>— <span class="m">(partners added after save)</span></td>
+            <td>Per-partner share of the business</td>
+          </tr>
+          <tr>
+            <td>Discretionary Trust</td>
+            <td>—</td>
+            <td>Trust equity, distributions at trustee discretion</td>
+          </tr>
+          <tr>
+            <td>Sole Trader</td>
+            <td>—</td>
+            <td>None — the individual <em>is</em> the business</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="body-col">
+      <p>
+        Note what is <em>not</em> asked for at creation: no email, no phone, no legal
+        name. Five fields and you are in. Those details are collected later on the
+        client record. That is a deliberate onboarding decision — the friction is
+        moved out of the moment where a user might abandon.
+      </p>
+    </div>
+  </section>
+
+  <!-- ==================================================== 5 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">05</span>
+      <h2>Getting the bank data in</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        There are two doors, and the interesting one is the live feed. Under
+        Australia's Consumer Data Right, the accountant cannot authorise access to
+        their client's bank — only the client can, at their own bank. The product
+        has to orchestrate a consent flow it does not control.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 1000 300" role="img" aria-label="Bank feed consent sequence across four actors: the accountant starts the connection, the platform emails the client, the client authorises at their own bank, the bank grants consent, and accounts then appear in the platform, after which the accountant fetches history.">
+        <defs>
+          <marker id="sq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- lanes -->
+        <g>
+          <rect class="n-box" x="10" y="10" width="150" height="34" rx="5"/>
+          <text class="lbl" x="85" y="32" text-anchor="middle">Accountant</text>
+          <line class="edge-dash" x1="85" y1="44" x2="85" y2="284"/>
+
+          <rect class="n-acc" x="285" y="10" width="150" height="34" rx="5"/>
+          <text class="lbl" x="360" y="32" text-anchor="middle">Platform</text>
+          <line class="edge-dash" x1="360" y1="44" x2="360" y2="284"/>
+
+          <rect class="n-box" x="560" y="10" width="150" height="34" rx="5"/>
+          <text class="lbl" x="635" y="32" text-anchor="middle">Client</text>
+          <line class="edge-dash" x1="635" y1="44" x2="635" y2="284"/>
+
+          <rect class="n-box" x="835" y="10" width="155" height="34" rx="5"/>
+          <text class="lbl" x="912" y="32" text-anchor="middle">Their bank</text>
+          <line class="edge-dash" x1="912" y1="44" x2="912" y2="284"/>
+        </g>
+
+        <!-- steps -->
+        <path class="edge-acc" d="M85 74 H354" marker-end="url(#sq)"/>
+        <text class="lbl-m" x="92" y="68">1 · enters client email, clicks connect</text>
+
+        <path class="edge-acc" d="M360 110 H629" marker-end="url(#sq)"/>
+        <text class="lbl-m" x="367" y="104">2 · secure consent request by email</text>
+
+        <path class="edge-acc" d="M635 146 H906" marker-end="url(#sq)"/>
+        <text class="lbl-m" x="642" y="140">3 · authorises at their own bank</text>
+
+        <path class="edge-acc" d="M912 182 H366" marker-end="url(#sq)"/>
+        <text class="lbl-m" x="500" y="176">4 · consent granted · accounts returned</text>
+
+        <path class="edge-acc" d="M360 218 H91" marker-end="url(#sq)"/>
+        <text class="lbl-m" x="150" y="212">5 · notified — accounts now live</text>
+
+        <path class="edge" d="M85 254 H354" marker-end="url(#ar)"/>
+        <text class="lbl-m" x="92" y="248">6 · fetch history: 1 / 3 / 6 / 12 / 24 months</text>
+
+        <text class="lbl-s" x="500" y="292" text-anchor="middle">the accountant is never present for step 3 — that is the whole point</text>
+      </svg>
+      <figcaption>
+        <b>The consent never passes through the accountant.</b> Step 6 is the one
+        people miss: a new feed pulls <em>forward from today only</em>. Backfilling a
+        client's history is an explicit, separate action — which is precisely the
+        moment the "five years behind" pitch gets demonstrated.
+      </figcaption>
+    </figure>
+
+    <div class="body-col">
+      <h3>The manual path, and its hard limit</h3>
+      <p>
+        PDF and CSV upload, up to ten files at once. The constraint that matters:
+        <strong>scanned or photographed PDFs do not work.</strong> The parser reads
+        embedded text, so a statement that is really an image fails. Any competitor
+        needs to either solve OCR or reject those files with a clear message rather
+        than mis-parsing them silently.
+      </p>
+      <div class="callout">
+        <span class="tag">Onboarding friction worth knowing about</span>
+        <p>
+          Business and trust accounts cannot share CDR data until someone at the
+          business is appointed a <strong>Nominated Representative</strong> at the
+          bank. The process differs at every institution. Ezyiah documents it
+          bank-by-bank with support contacts — which tells you how often it blocks
+          onboarding.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================================================== 6 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">06</span>
+      <h2>Tax codes are the hinge</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Every account carries a tax code, and that code — not the account, not the
+        amount — decides which BAS labels the transaction feeds. Get the mapping
+        wrong and the books still balance while the BAS is quietly incorrect.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 900 380" role="img" aria-label="Mapping from Australian tax codes to BAS labels: GST on Income feeds G1 and 1A; GST Free Income feeds G1 only; GST on Expenses feeds G11 and 1B; GST on Capital feeds G10 and 1B; Input Taxed and BAS Excluded feed nothing.">
+        <text class="lbl-t" x="20" y="24">TAX CODE ON THE ACCOUNT</text>
+        <text class="lbl-t" x="640" y="24">BAS LABEL</text>
+
+        <!-- codes -->
+        <g>
+          <rect class="n-acc" x="20" y="44" width="230" height="34" rx="4"/>
+          <text class="lbl" x="34" y="66">GST on Income</text>
+
+          <rect class="n-box" x="20" y="90" width="230" height="34" rx="4"/>
+          <text class="lbl" x="34" y="112">GST Free Income</text>
+
+          <rect class="n-acc" x="20" y="136" width="230" height="34" rx="4"/>
+          <text class="lbl" x="34" y="158">GST on Expenses</text>
+
+          <rect class="n-box" x="20" y="182" width="230" height="34" rx="4"/>
+          <text class="lbl" x="34" y="204">GST Free Expenses</text>
+
+          <rect class="n-acc" x="20" y="228" width="230" height="34" rx="4"/>
+          <text class="lbl" x="34" y="250">GST on Capital</text>
+
+          <rect class="n-flag" x="20" y="274" width="230" height="34" rx="4"/>
+          <text class="lbl" x="34" y="296">Input Taxed</text>
+
+          <rect class="n-flag" x="20" y="320" width="230" height="34" rx="4"/>
+          <text class="lbl" x="34" y="342">BAS Excluded</text>
+        </g>
+
+        <!-- labels -->
+        <g>
+          <rect class="n-box" x="650" y="44" width="150" height="34" rx="4"/>
+          <text class="lbl" x="666" y="60">G1</text>
+          <text class="lbl-s" x="700" y="60">total sales</text>
+
+          <rect class="n-box" x="650" y="98" width="150" height="34" rx="4"/>
+          <text class="lbl" x="666" y="114">1A</text>
+          <text class="lbl-s" x="700" y="114">GST you owe</text>
+
+          <rect class="n-box" x="650" y="176" width="150" height="34" rx="4"/>
+          <text class="lbl" x="666" y="192">G11</text>
+          <text class="lbl-s" x="706" y="192">purchases</text>
+
+          <rect class="n-box" x="650" y="230" width="150" height="34" rx="4"/>
+          <text class="lbl" x="666" y="246">G10</text>
+          <text class="lbl-s" x="706" y="246">capital</text>
+
+          <rect class="n-box" x="650" y="284" width="150" height="34" rx="4"/>
+          <text class="lbl" x="666" y="300">1B</text>
+          <text class="lbl-s" x="700" y="300">GST refundable</text>
+        </g>
+
+        <!-- edges -->
+        <path class="edge-acc" d="M250 61 H646" marker-end="url(#ar-a)"/>
+        <path class="edge-acc" d="M250 61 C420 61 480 115 646 115" marker-end="url(#ar-a)"/>
+        <path class="edge" d="M250 107 C420 107 500 61 646 61" marker-end="url(#ar)"/>
+        <path class="edge-acc" d="M250 153 C420 153 500 193 646 193" marker-end="url(#ar-a)"/>
+        <path class="edge-acc" d="M250 153 C440 153 520 301 646 301" marker-end="url(#ar-a)"/>
+        <path class="edge" d="M250 199 C420 199 520 193 646 193" marker-end="url(#ar)"/>
+        <path class="edge-acc" d="M250 245 C420 245 520 247 646 247" marker-end="url(#ar-a)"/>
+        <path class="edge-acc" d="M250 245 C450 245 540 301 646 301" marker-end="url(#ar-a)"/>
+
+        <text class="lbl-m" x="300" y="292">no BAS contribution</text>
+        <text class="lbl-m" x="300" y="338">no BAS contribution</text>
+      </svg>
+      <figcaption>
+        <b>Direction is part of the code.</b> A flat "GST / no GST" flag cannot
+        produce a correct BAS, because 1A and 1B must be separated — the code has to
+        know whether money came in or went out. The two amber rows are the ones that
+        catch people: bank fees and interest are <em>input taxed</em>, not GST-free,
+        and wages are <em>excluded</em> entirely and report at W1.
+      </figcaption>
+    </figure>
+
+    <div class="callout">
+      <span class="tag">Discrepancy found — worth an advisor's opinion</span>
+      <p>
+        Ezyiah's own chart of accounts codes <strong>Interest Income as GST Free
+        Income</strong>. Interest is a financial supply, which is <em>input
+        taxed</em> — and the two differ on the BAS, because GST-free income reports
+        at G1 while input-taxed sales are backed out at G4. If they are wrong, G1 is
+        overstated for every client holding a bank account. This is exactly the class
+        of question that needs a registered agent's sign-off rather than a
+        developer's judgment.
+      </p>
+    </div>
+  </section>
+
+  <!-- ==================================================== 7 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">07</span>
+      <h2>The flywheel</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        The feature marketed as "AI Memory" is not a vector database. It is a
+        structured rule table, written at the moment an accountant corrects
+        something, and scoped by an explicit choice they make in the dialog.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 760 330" role="img" aria-label="The memory flywheel: a transaction receives a proposal, the accountant corrects it, the correction is stored as a scoped rule, and the next matching transaction is resolved by that rule before reaching the model.">
+        <defs>
+          <marker id="fw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <circle cx="380" cy="165" r="118" fill="none" stroke="var(--rule)" stroke-width="1" stroke-dasharray="3 4"/>
+
+        <rect class="n-box" x="296" y="10" width="168" height="42" rx="5"/>
+        <text class="lbl" x="380" y="29" text-anchor="middle">Transaction arrives</text>
+        <text class="lbl-s" x="380" y="44" text-anchor="middle">"TELSTRA CORP 4471"</text>
+
+        <rect class="n-flag" x="556" y="140" width="172" height="50" rx="5"/>
+        <text class="lbl" x="642" y="160" text-anchor="middle">Model proposes</text>
+        <text class="lbl-s" x="642" y="176" text-anchor="middle">an account + tax code</text>
+
+        <rect class="n-box" x="296" y="278" width="168" height="46" rx="5"/>
+        <text class="lbl" x="380" y="298" text-anchor="middle">Accountant corrects</text>
+        <text class="lbl-s" x="380" y="314" text-anchor="middle">moves it, picks a scope</text>
+
+        <rect class="n-acc" x="32" y="140" width="176" height="50" rx="5"/>
+        <text class="lbl" x="120" y="160" text-anchor="middle">Rule written</text>
+        <text class="lbl-s" x="120" y="176" text-anchor="middle">pattern → account + code</text>
+
+        <path class="edge-acc" d="M464 40 C544 52 574 96 596 136" marker-end="url(#fw)"/>
+        <path class="edge-acc" d="M628 190 C588 250 512 288 470 300" marker-end="url(#fw)"/>
+        <path class="edge-acc" d="M296 300 C230 286 158 246 128 194" marker-end="url(#fw)"/>
+        <path class="edge-acc" d="M132 138 C158 94 214 50 292 38" marker-end="url(#fw)"/>
+
+        <text class="lbl-m" x="530" y="86">only if unresolved</text>
+        <text class="lbl-m" x="522" y="262">correction</text>
+        <text class="lbl-m" x="126" y="252">becomes a rule</text>
+        <text class="lbl-m" x="150" y="86">resolved before the model</text>
+
+        <text class="lbl" x="380" y="158" text-anchor="middle" style="font-weight:600">Each quarter</text>
+        <text class="lbl" x="380" y="176" text-anchor="middle" style="font-weight:600">needs less correction</text>
+      </svg>
+      <figcaption>
+        <b>Every correction narrows the next quarter's work.</b> The scope choice is
+        the mechanism: <em>this client only</em> or <em>every client</em>. Client
+        rules outrank firm rules. Because the rule is consulted before the model
+        runs, the flywheel cuts cost and increases consistency at the same time — the
+        same merchant codes the same way every time, which a probabilistic classifier
+        alone cannot guarantee.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ==================================================== 8 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">08</span>
+      <h2>What review actually looks like</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Transactions land sorted into buckets, each showing a count of rows still
+        awaiting attention. The accountant works a bucket until its counter clears.
+        The interaction is deliberately industrial — this is a screen someone spends
+        hours in.
+      </p>
+    </div>
+
+    <div class="stage-grid">
+      <div class="stage"><span class="k">bucket</span><span class="t">Income</span><span class="d">GST-applicable revenue</span></div>
+      <div class="stage"><span class="k">bucket</span><span class="t">Expense</span><span class="d">Business costs</span></div>
+      <div class="stage"><span class="k">bucket</span><span class="t">Other Expense</span><span class="d">GST not applicable for BAS</span></div>
+      <div class="stage"><span class="k">bucket</span><span class="t">Transfers</span><span class="d">Between the client's own accounts</span></div>
+      <div class="stage"><span class="k">bucket</span><span class="t">Subcontractors</span><span class="d">Feeds TPAR</span></div>
+      <div class="stage"><span class="k">bucket</span><span class="t">Unknown</span><span class="d">The machine declined to guess</span></div>
+    </div>
+
+    <div class="body-col">
+      <h3>The five actions on a row</h3>
+      <p>
+        <strong>Scan similar</strong> finds every matching description so one decision
+        can be applied in bulk. <strong>Move</strong> reassigns the account, and
+        prompts for the memory scope. <strong>Split</strong> divides one bank line
+        across several accounts, and will not save unless the parts sum exactly to the
+        original. <strong>Edit</strong> adjusts date, description or amounts.
+        <strong>Delete</strong> removes the row.
+      </p>
+      <p>
+        That last one is the design decision I would not copy. Deleting a posted
+        accounting record destroys the audit trail. Void, reverse or exclude
+        preserves history and answers the same user need.
+      </p>
+      <div class="callout neutral">
+        <span class="tag">The metric that governs everything</span>
+        <p>
+          A transaction sent to review costs an accountant fifteen seconds. One
+          confidently auto-approved into the wrong account costs them a wrong BAS.
+          The number to optimise is therefore <strong>false auto-approval rate</strong>,
+          not raw accuracy — and "Unknown" must always be an acceptable answer.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================================================== 9 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">09</span>
+      <h2>Ten reports, one source</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Every report derives from the ledger. Three of them need an extra register
+        first — which is why depreciation and TPAR are separate product areas rather
+        than just another report.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 980 320" role="img" aria-label="Report dependency graph: the ledger produces Profit and Loss, Balance Sheet, Trial Balance, General Ledger, Transactions Report and BAS directly; the asset register adds the Depreciation Schedule; the subcontractor register adds TPAR; and the EOFY statement combines ledger, assets and loans.">
+        <rect class="n-acc" x="386" y="12" width="208" height="46" rx="5"/>
+        <text class="lbl" x="490" y="32" text-anchor="middle">Double-entry ledger</text>
+        <text class="lbl-s" x="490" y="48" text-anchor="middle">journals + journal lines</text>
+
+        <line class="edge" x1="490" y1="58" x2="490" y2="82"/>
+        <line class="edge" x1="70" y1="82" x2="910" y2="82"/>
+
+        <g>
+          <path class="edge" d="M70 82 V112" marker-end="url(#ar)"/>
+          <rect class="n-box" x="16" y="114" width="108" height="40" rx="5"/>
+          <text class="lbl" x="70" y="139" text-anchor="middle">Profit &amp; Loss</text>
+
+          <path class="edge" d="M210 82 V112" marker-end="url(#ar)"/>
+          <rect class="n-box" x="156" y="114" width="108" height="40" rx="5"/>
+          <text class="lbl" x="210" y="139" text-anchor="middle">Balance Sheet</text>
+
+          <path class="edge" d="M350 82 V112" marker-end="url(#ar)"/>
+          <rect class="n-box" x="296" y="114" width="108" height="40" rx="5"/>
+          <text class="lbl" x="350" y="139" text-anchor="middle">Trial Balance</text>
+
+          <path class="edge" d="M490 82 V112" marker-end="url(#ar)"/>
+          <rect class="n-box" x="436" y="114" width="108" height="40" rx="5"/>
+          <text class="lbl" x="490" y="139" text-anchor="middle">General Ledger</text>
+
+          <path class="edge" d="M630 82 V112" marker-end="url(#ar)"/>
+          <rect class="n-box" x="576" y="114" width="108" height="40" rx="5"/>
+          <text class="lbl" x="630" y="139" text-anchor="middle">Transactions</text>
+
+          <path class="edge-acc" d="M790 82 V112" marker-end="url(#ar-a)"/>
+          <rect class="n-acc" x="736" y="114" width="108" height="40" rx="5"/>
+          <text class="lbl" x="790" y="132" text-anchor="middle">BAS</text>
+          <text class="lbl-s" x="790" y="146" text-anchor="middle">simple + extended</text>
+        </g>
+
+        <!-- registers -->
+        <text class="lbl-t" x="16" y="200">REGISTERS — REQUIRED BEFORE THE REPORT EXISTS</text>
+
+        <rect class="n-box" x="16" y="216" width="150" height="42" rx="5"/>
+        <text class="lbl" x="91" y="234" text-anchor="middle">Asset register</text>
+        <text class="lbl-s" x="91" y="249" text-anchor="middle">cost, method, private use</text>
+        <path class="edge" d="M166 237 H244" marker-end="url(#ar)"/>
+        <rect class="n-box" x="248" y="216" width="150" height="42" rx="5"/>
+        <text class="lbl" x="323" y="241" text-anchor="middle">Depreciation Schedule</text>
+
+        <rect class="n-box" x="440" y="216" width="164" height="42" rx="5"/>
+        <text class="lbl" x="522" y="234" text-anchor="middle">Subcontractor register</text>
+        <text class="lbl-s" x="522" y="249" text-anchor="middle">name + ABN + allocations</text>
+        <path class="edge" d="M604 237 H682" marker-end="url(#ar)"/>
+        <rect class="n-box" x="686" y="216" width="108" height="42" rx="5"/>
+        <text class="lbl" x="740" y="241" text-anchor="middle">TPAR</text>
+
+        <!-- EOFY -->
+        <path class="edge-dash" d="M91 258 V292 H840 V262" marker-end="url(#ar-d)"/>
+        <path class="edge-dash" d="M490 58 C900 58 900 120 878 258"/>
+        <rect class="n-acc" x="800" y="216" width="150" height="44" rx="5"/>
+        <text class="lbl" x="875" y="234" text-anchor="middle">EOFY Statement</text>
+        <text class="lbl-s" x="875" y="249" text-anchor="middle">ledger + assets + loans</text>
+      </svg>
+      <figcaption>
+        <b>One reporting layer, not ten calculators.</b> If each report did its own
+        arithmetic you get the classic failure: the P&amp;L says $50,000, the trial
+        balance says $49,999, and nobody can tell which is right. The registers are
+        genuine prerequisites — a client with no subcontractors set up simply has no
+        TPAR to generate.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ==================================================== 10 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">10</span>
+      <h2>The commercial model</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Pricing is metered on reconciled transactions, not seats. Unlimited users,
+        unlimited clients, unlimited bank feeds on every tier. The meter is the one
+        thing that scales.
+      </p>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>Tier</th><th>Monthly</th><th>Annual</th><th>Reconciled transactions / year</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Core</td><td><span class="m">$399</span></td><td><span class="m">$299</span></td><td><span class="m">120,000</span></td></tr>
+          <tr><td>Growth</td><td><span class="m">$799</span></td><td><span class="m">$599</span></td><td><span class="m">300,000</span></td></tr>
+          <tr><td>Scale</td><td><span class="m">$1,499</span></td><td><span class="m">$1,124</span></td><td><span class="m">600,000</span></td></tr>
+          <tr><td>Enterprise</td><td colspan="2">Custom</td><td>Multi-office, custom workflows</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="body-col">
+      <p>
+        Unused transactions roll over. Trial is 1,000 reconciled transactions with no
+        card. Top-up packs run from <span class="m">$85</span> for 2,500 to
+        <span class="m">$799</span> for 25,000.
+      </p>
+      <p>
+        The strategic consequence is that <strong>gross margin is an engineering
+        property, not a commercial one</strong>. Every transaction the deterministic
+        layers resolve before the model is margin retained. A competitor that sends
+        everything to an LLM has the same price list and a materially worse business.
+      </p>
+    </div>
+  </section>
+
+  <!-- ==================================================== 11 -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">11</span>
+      <h2>Where the gaps are</h2>
+    </div>
+    <div class="body-col">
+      <p>
+        Reading thirty help articles against the marketing site surfaces three things
+        worth acting on.
+      </p>
+
+      <h3>1 · The export path is undocumented</h3>
+      <p>
+        The marketing site claims integration with Xero and MYOB. Across every
+        documented workflow, "export" only ever means downloading a report. No
+        transaction export to another ledger is described anywhere. Either it does
+        not exist yet, or it is undocumented — and for a product positioned as a
+        pre-processing layer <em>in front of</em> Xero, that is the load-bearing
+        feature. It is the clearest differentiation opportunity available.
+      </p>
+
+      <h3>2 · Deletion over reversal</h3>
+      <p>
+        Documented behaviour permanently deletes transactions. Production accounting
+        systems void or reverse, because the audit trail is the product's
+        defensibility. Choosing the safer semantics costs nothing and is genuinely
+        better.
+      </p>
+
+      <h3>3 · The documentation was shipped fast</h3>
+      <p>
+        Seven articles carry a note that sections will be added "once screenshots are
+        available" — including the Balance Sheet's liabilities and equity, the
+        remaining PAYG labels, and the entire With Balances view of the General
+        Ledger. The product is moving faster than its docs, which tells you where the
+        team's attention is.
+      </p>
+
+      <div class="callout neutral">
+        <span class="tag">The one sentence to take away</span>
+        <p>
+          The moat is not the classifier. It is the ordering — deterministic rules and
+          learned memory ahead of the model, deterministic tax and accounting
+          validation behind it, and a human holding the pen. That is what makes the
+          output something a registered agent will put their name to.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="body-col">
+      <p>
+        Compiled from publicly available documentation and the free-tier interface for
+        the purpose of building an independent implementation. No proprietary source,
+        prompts, schema or brand assets were accessed or reproduced.
+      </p>
+    </div>
+  </footer>
+
+</div>
