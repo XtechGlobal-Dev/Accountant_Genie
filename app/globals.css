@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* `dark:` follows the explicit theme attribute set by the theme script, not the OS. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /**
  * Design tokens — "clear blue".
  *
