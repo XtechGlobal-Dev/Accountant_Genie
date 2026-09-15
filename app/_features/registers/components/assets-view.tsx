@@ -12,6 +12,8 @@ import { createAsset, disposeAsset, updateAsset } from "@/server/modules/assets/
 import type { AccountOption } from "@/shared/contracts/account";
 import type { AssetRow } from "@/shared/contracts/register";
 import { shortDate } from "@/shared/format";
+import { ASSET_CATEGORY_LABELS } from "@/shared/labels";
+import { Icon } from "@/ui/icons";
 import { basisPointsToInput, centsToInput, formatBasisPoints } from "@/shared/money";
 import {
   Alert,
@@ -25,6 +27,7 @@ import {
   Money,
   PageHeader,
   Select,
+  submitWith,
 } from "@/ui/primitives";
 
 type Editing = { mode: "new" } | { mode: "edit"; row: AssetRow } | { mode: "dispose"; row: AssetRow } | null;
@@ -71,6 +74,7 @@ export function AssetsView({ clientId, rows, accounts }: { clientId: string; row
             <thead>
               <tr>
                 <th>Asset</th>
+                <th className="w-44">Category</th>
                 <th className="w-28">Purchased</th>
                 <th className="w-32 text-right">Cost</th>
                 <th className="w-32">Method</th>
@@ -94,6 +98,9 @@ export function AssetsView({ clientId, rows, accounts }: { clientId: string; row
                     ) : null}
                     {row.description ? <span className="block text-xs text-ink-3">{row.description}</span> : null}
                   </td>
+                  <td>
+                    <Badge tone="outline">{ASSET_CATEGORY_LABELS[row.category]}</Badge>
+                  </td>
                   <td className="figure text-ink-2">{shortDate(row.purchaseDate)}</td>
                   <td className="text-right">
                     <Money cents={row.costCents} />
@@ -103,12 +110,12 @@ export function AssetsView({ clientId, rows, accounts }: { clientId: string; row
                   <td className="figure text-right text-ink-2">{formatBasisPoints(row.privateUseBasisPoints)}</td>
                   <td className="text-ink-2">{row.accountName ?? "—"}</td>
                   <td className="text-right">
-                    <span className="inline-flex items-center gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => setEditing({ mode: "edit", row })}>
+                    <span className="inline-flex items-center gap-2">
+                      <Button variant="secondary" size="sm" icon="pen" onClick={() => setEditing({ mode: "edit", row })}>
                         Edit
                       </Button>
                       {!row.disposedAt ? (
-                        <Button variant="ghost" size="sm" onClick={() => setEditing({ mode: "dispose", row })}>
+                        <Button variant="secondary" size="sm" icon="archive" onClick={() => setEditing({ mode: "dispose", row })}>
                           Dispose
                         </Button>
                       ) : null}
@@ -160,44 +167,116 @@ function useFormAction(onDone: () => void) {
   return { pending, error, field, run, errorFor };
 }
 
+const CATEGORIES = Object.entries(ASSET_CATEGORY_LABELS) as [keyof typeof ASSET_CATEGORY_LABELS, string][];
+
+/**
+ * The yearly rate the schedule will apply, from the method and the effective
+ * life — the ATO's formulas for assets acquired after 10 May 2006, the same
+ * ones `depreciation.ts` uses. Shown, never stored: it is derived.
+ */
+function rateFor(method: string, years: string): string | null {
+  const life = Number(years);
+  if (!Number.isFinite(life) || life <= 0) return null;
+  return ((method === "PRIME_COST" ? 100 : 200) / life).toFixed(2);
+}
+
 function AssetModal({ clientId, row, accounts, onClose }: { clientId: string; row: AssetRow | null; accounts: AccountOption[]; onClose: () => void }) {
   const form = useFormAction(onClose);
+  const [preview, setPreview] = useState<{ method: string; years: string }>({ method: row?.method ?? "DIMINISHING_VALUE", years: row ? lifeYears(row.effectiveLifeMonths) : "" });
+  const rate = rateFor(preview.method, preview.years);
+
   return (
-    <Modal open onClose={onClose} title={row ? "Edit asset" : "New asset"} description="Cost, date, method and effective life drive the depreciation schedule." size="lg">
-      <form action={(data) => form.run(() => (row ? updateAsset(clientId, row.id, data) : createAsset(clientId, data)))}>
-        <div className="flex flex-col gap-4 px-5 py-5">
+    <Modal
+      open
+      onClose={onClose}
+      icon="calculator"
+      title={row ? "Edit asset" : "Add new asset"}
+      description="Cost, date, method and effective life drive the depreciation schedule. Private use reduces the deductible share."
+      size="lg"
+    >
+      <form
+        onChange={(event) => {
+          const data = new FormData(event.currentTarget);
+          setPreview({ method: String(data.get("method") ?? "DIMINISHING_VALUE"), years: String(data.get("effectiveLifeYears") ?? "") });
+        }}
+        onSubmit={submitWith((data) => form.run(() => (row ? updateAsset(clientId, row.id, data) : createAsset(clientId, data))))}
+      >
+        <div className="flex flex-col gap-5 px-5 py-5 sm:px-6">
           {form.error && !form.field ? <Alert tone="negative">{form.error}</Alert> : null}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Asset" name="name" required defaultValue={row?.name ?? ""} placeholder="e.g. Toyota HiLux" error={form.errorFor("name")} />
-            <Field label="Description" name="description" defaultValue={row?.description ?? ""} error={form.errorFor("description")} />
-            <Field label="Cost (GST exclusive)" name="cost" required inputMode="decimal" defaultValue={row ? centsToInput(row.costCents) : ""} placeholder="0.00" error={form.errorFor("costCents")} />
-            <Field label="Purchase date" name="purchaseDate" required type="date" defaultValue={row ? row.purchaseDate.toISOString().slice(0, 10) : ""} error={form.errorFor("purchaseDate")} />
-            <Select label="Method" name="method" defaultValue={row?.method ?? "DIMINISHING_VALUE"} hint="Diminishing value front-loads the decline; prime cost spreads it evenly.">
+
+          <section className="flex flex-col gap-4 rounded-2xl border border-rule bg-surface p-5 shadow-xs">
+            <p className="text-base font-bold">Depreciation</p>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Asset name" name="name" required defaultValue={row?.name ?? ""} placeholder="e.g. Office computer" error={form.errorFor("name")} />
+              <Select label="Category" name="category" required defaultValue={row?.category ?? ""} icon="layers" error={form.errorFor("category")}>
+                <option value="" disabled>
+                  Select
+                </option>
+                {CATEGORIES.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+
+              <Field label="Total cost" name="totalCost" inputMode="decimal" prefix="$" defaultValue={row?.totalCostCents === null || row?.totalCostCents === undefined ? "" : centsToInput(row.totalCostCents)} placeholder="0.00" hint="What was paid, GST included." error={form.errorFor("totalCostCents")} />
+              <Field label="Acquisition cost" name="cost" required inputMode="decimal" prefix="$" defaultValue={row ? centsToInput(row.costCents) : ""} placeholder="0.00" hint="The depreciable cost — GST exclusive when the client claims the credit." error={form.errorFor("costCents")} />
+
+              <Field label="GST" name="gst" inputMode="decimal" prefix="$" defaultValue={row?.gstCents === null || row?.gstCents === undefined ? "" : centsToInput(row.gstCents)} placeholder="0.00" error={form.errorFor("gstCents")} />
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[13px] font-semibold text-ink">Rate of depreciation</span>
+                <div className="flex h-[2.75rem] items-center justify-between rounded-xl border border-rule bg-sunken px-3.5 text-sm">
+                  <span className={rate ? "figure text-ink" : "text-ink-3"}>{rate ?? "Set the method and effective life"}</span>
+                  <span className="font-medium text-ink-3">%</span>
+                </div>
+                <p className="text-xs leading-relaxed text-ink-3">Per year, from the method and effective life: prime cost 100% ÷ life, diminishing value 200% ÷ life.</p>
+              </div>
+            </div>
+
+            <Field label="Private use" name="privateUsePercent" inputMode="decimal" suffix="%" defaultValue={row ? basisPointsToInput(row.privateUseBasisPoints) : ""} placeholder="e.g. 50" hint="Reduces the deductible share, not the decline." error={form.errorFor("privateUseBasisPoints")} />
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Acquisition date" name="purchaseDate" required type="date" icon="calendar" defaultValue={row ? row.purchaseDate.toISOString().slice(0, 10) : ""} error={form.errorFor("purchaseDate")} />
+              <Field label="Effective life (years)" name="effectiveLifeYears" required inputMode="decimal" defaultValue={row ? lifeYears(row.effectiveLifeMonths) : ""} placeholder="e.g. 5" hint="From the ATO's effective life tables, or self-assessed." error={form.errorFor("effectiveLifeMonths")} />
+            </div>
+
+            <Select label="Depreciation method" name="method" icon="trending-down" defaultValue={row?.method ?? "DIMINISHING_VALUE"} hint="Diminishing value front-loads the decline; prime cost spreads it evenly.">
               <option value="DIMINISHING_VALUE">Diminishing value</option>
               <option value="PRIME_COST">Prime cost</option>
             </Select>
-            <Field label="Effective life (years)" name="effectiveLifeYears" required inputMode="decimal" defaultValue={row ? lifeYears(row.effectiveLifeMonths) : ""} placeholder="e.g. 8" hint="From the ATO's effective life tables, or self-assessed." error={form.errorFor("effectiveLifeMonths")} />
-            <Field label="Private use (%)" name="privateUsePercent" inputMode="decimal" defaultValue={row ? basisPointsToInput(row.privateUseBasisPoints) : ""} placeholder="0" hint="Reduces the deductible share, not the decline." error={form.errorFor("privateUseBasisPoints")} />
-            <Select label="Is it a car?" name="isCar" defaultValue={row?.isCar ? "yes" : "no"} hint="The car limit applies once the tax advisor has verified it.">
-              <option value="no">No</option>
-              <option value="yes">Yes — a car</option>
-            </Select>
-            <Select label="Balance sheet account" name="accountId" defaultValue={row?.accountId ?? ""} error={form.errorFor("accountId")}>
-              <option value="">Not linked</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.code} · {a.name}
-                </option>
-              ))}
-            </Select>
-          </div>
+
+            <div className="grid gap-4 border-t border-rule pt-4 sm:grid-cols-2">
+              <Select label="Is it a car?" name="isCar" defaultValue={row?.isCar ? "yes" : "no"} hint="The car limit applies once the tax advisor has verified it.">
+                <option value="no">No</option>
+                <option value="yes">Yes — a car</option>
+              </Select>
+              <Select label="Balance sheet account" name="accountId" icon="book-open" defaultValue={row?.accountId ?? ""} error={form.errorFor("accountId")}>
+                <option value="">Not linked</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} · {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <Field label="Description" name="description" defaultValue={row?.description ?? ""} placeholder="Serial number, location, anything worth remembering" error={form.errorFor("description")} />
+          </section>
+
+          {row?.disposedAt ? (
+            <p className="flex items-center gap-2 text-xs text-ink-3">
+              <Icon name="archive" className="size-3.5" />
+              Disposed on {shortDate(row.disposedAt)}. Depreciation stopped that day.
+            </p>
+          ) : null}
         </div>
         <ModalFooter>
           <Button variant="secondary" onClick={onClose} disabled={form.pending}>
             Cancel
           </Button>
-          <Button type="submit" disabled={form.pending}>
-            {form.pending ? "Saving…" : row ? "Save changes" : "Add asset"}
+          <Button type="submit" icon="save" disabled={form.pending}>
+            {form.pending ? "Saving…" : row ? "Save changes" : "Save"}
           </Button>
         </ModalFooter>
       </form>
@@ -209,7 +288,7 @@ function DisposeModal({ clientId, row, onClose }: { clientId: string; row: Asset
   const form = useFormAction(onClose);
   return (
     <Modal open onClose={onClose} title={`Dispose of ${row.name}`} description="The asset stays on the register; depreciation stops at the disposal date.">
-      <form action={(data) => form.run(() => disposeAsset(clientId, row.id, data))}>
+      <form onSubmit={submitWith((data) => form.run(() => disposeAsset(clientId, row.id, data)))}>
         <div className="flex flex-col gap-4 px-5 py-5">
           {form.error && !form.field ? <Alert tone="negative">{form.error}</Alert> : null}
           <Field label="Disposal date" name="disposedAt" required type="date" error={form.errorFor("disposedAt")} />

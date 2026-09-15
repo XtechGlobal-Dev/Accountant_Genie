@@ -33,6 +33,18 @@ const abnField = z
   .refine((v) => v === "" || isValidAbn(v), "That is not a valid ABN — check the digits")
   .optional();
 
+/**
+ * A client's own ABN is required: every report, BAS and TPAR prepared here is
+ * prepared for a business, and a business the firm keeps books for has one.
+ * A trustee's ABN stays optional above — an individual trustee has none.
+ */
+const requiredAbnField = z
+  .string()
+  .trim()
+  .transform((v) => v.replace(/\s+/g, ""))
+  .refine((v) => v !== "", "ABN is required")
+  .refine((v) => v === "" || isValidAbn(v), "That is not a valid ABN — check the digits");
+
 /** Fields only some entity types own. Cleared by the service for the others. */
 const entitySpecific = {
   incomeTaxRate: z.coerce.number().int().min(0).max(100).optional(),
@@ -42,7 +54,7 @@ const entitySpecific = {
 
 export const CreateClientSchema = z.object({
   businessName: z.string().trim().min(1, "Business name is required").max(200),
-  abn: abnField,
+  abn: requiredAbnField,
   gstRegistered: z.coerce.boolean(),
   industry: optionalText(120),
   entityType: EntityEnum,
@@ -52,7 +64,7 @@ export const CreateClientSchema = z.object({
 export const UpdateClientSchema = z.object({
   businessName: z.string().trim().min(1, "Business name is required").max(200),
   legalName: optionalText(200),
-  abn: abnField,
+  abn: requiredAbnField,
   industry: optionalText(120),
   email: optionalText(200).refine((v) => !v || EMAIL.test(v), "Enter a valid email address"),
   phone: optionalText(40),
@@ -96,10 +108,47 @@ export const PartnersSchema = z
     { path: ["partners"], message: "Partner shares must add up to exactly 100%" },
   );
 
+/**
+ * The trustee and beneficiaries of a UNIT_TRUST or DISCRETIONARY_TRUST client.
+ *
+ * Saved as one set, like partners: a trust with a trustee and no beneficiary
+ * is not a trust anyone can distribute from, so the form cannot save half.
+ * Names are people or entities the accountant types; the ABN of a corporate
+ * trustee gets the same checksum as the client's own.
+ */
+export const TrusteeKindEnum = z.enum(["CORPORATE", "INDIVIDUAL"]);
+export const BeneficiaryKindEnum = z.enum(["INDIVIDUAL", "COMPANY", "TRUST"]);
+
+const personName = (what: string) => z.string().trim().min(1, `${what} needs a name`).max(120);
+
+export const TrustDetailsSchema = z.object({
+  trustee: z.object({
+    kind: TrusteeKindEnum,
+    name: z.string().trim().min(1, "The trustee needs a name").max(200),
+    abn: abnField,
+    signatories: z
+      .array(personName("Every signatory"))
+      .max(20, "That is more signatories than a trustee can hold"),
+  }),
+  beneficiaries: z
+    .array(
+      z.object({
+        name: personName("Every beneficiary"),
+        kind: BeneficiaryKindEnum,
+      }),
+    )
+    .min(1, "A trust needs at least one beneficiary")
+    .max(100, "That is more beneficiaries than a trust can hold"),
+});
+
+/** The entity types that carry a trustee and beneficiaries. */
+export const TRUST_ENTITIES: ReadonlySet<string> = new Set(["UNIT_TRUST", "DISCRETIONARY_TRUST"]);
+
 export type CreateClientInput = z.infer<typeof CreateClientSchema>;
 export type UpdateClientInput = z.infer<typeof UpdateClientSchema>;
 export type ClientNoteInput = z.infer<typeof ClientNoteSchema>;
 export type PartnersInput = z.infer<typeof PartnersSchema>;
+export type TrustDetailsInput = z.infer<typeof TrustDetailsSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Form adapters                                                              */

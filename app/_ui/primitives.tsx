@@ -11,7 +11,7 @@
 
 import "client-only";
 
-import { useEffect, useState, type ChangeEvent, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useState, type ChangeEvent, type ComponentProps, type ReactNode, type FormEvent } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { Icon, type IconName } from "./icons";
@@ -202,6 +202,8 @@ export function Field({
   autoComplete,
   inputMode,
   icon,
+  prefix,
+  suffix,
   className,
 }: {
   // `| undefined` on each: with exactOptionalPropertyTypes an omitted prop and
@@ -217,6 +219,9 @@ export function Field({
   autoComplete?: string | undefined;
   inputMode?: ComponentProps<"input">["inputMode"] | undefined;
   icon?: IconName | undefined;
+  /** A unit at either end of the input: "$" before an amount, "%" after a rate. */
+  prefix?: string | undefined;
+  suffix?: string | undefined;
   className?: string | undefined;
 }) {
   const id = `field-${name}`;
@@ -240,6 +245,9 @@ export function Field({
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3"
           />
         ) : null}
+        {prefix ? (
+          <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-medium text-ink-3">{prefix}</span>
+        ) : null}
         <input
           id={id}
           name={name}
@@ -252,8 +260,11 @@ export function Field({
           onChange={onEdit}
           aria-invalid={shown ? true : undefined}
           aria-describedby={describedBy || undefined}
-          className={cx(inputClass, icon && "pl-9")}
+          className={cx(inputClass, icon && "pl-9", prefix && "pl-8", suffix && "pr-9")}
         />
+        {suffix ? (
+          <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-medium text-ink-3">{suffix}</span>
+        ) : null}
       </div>
       {shown ? <FieldError id={`${id}-error`}>{shown}</FieldError> : null}
       {hint ? (
@@ -356,6 +367,7 @@ export function Select({
   label,
   error,
   hint,
+  icon,
   className,
   children,
   id,
@@ -364,6 +376,8 @@ export function Select({
   label?: string | undefined;
   error?: string | undefined;
   hint?: string | undefined;
+  /** A leading glyph, matching `Field`'s. */
+  icon?: IconName | undefined;
 } & ComponentProps<"select">) {
   const selectId = id ?? (rest.name ? `select-${rest.name}` : undefined);
   const { shown, onEdit } = useSubmitError(error);
@@ -371,15 +385,18 @@ export function Select({
   return (
     <div className={cx("flex flex-col gap-1.5", className)}>
       {label ? (
-        <label htmlFor={selectId} className="text-sm font-medium text-ink">
+        <label htmlFor={selectId} className="text-[13px] font-semibold text-ink">
           {label}
         </label>
       ) : null}
       <div className="relative">
+        {icon ? (
+          <Icon name={icon} className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3" />
+        ) : null}
         <select
           id={selectId}
           aria-invalid={shown ? true : undefined}
-          className={cx(inputClass, "appearance-none pr-9")}
+          className={cx(inputClass, "appearance-none pr-9", icon && "pl-9")}
           {...rest}
           // After `rest`, so a caller's own onChange still runs rather than being lost.
           onChange={(event) => {
@@ -794,6 +811,7 @@ export function Modal({
   onClose,
   title,
   description,
+  icon,
   size = "md",
   children,
 }: {
@@ -801,6 +819,12 @@ export function Modal({
   onClose: () => void;
   title: string;
   description?: string | undefined;
+  /**
+   * A tile beside the title. Given, the header takes the hero layout: the
+   * tile, a larger title and the description as a paragraph, with no rule
+   * under it — for the one-purpose dialogs that open from an empty state.
+   */
+  icon?: IconName | undefined;
   size?: keyof typeof MODAL_WIDTHS | undefined;
   children: ReactNode;
 }) {
@@ -822,9 +846,11 @@ export function Modal({
   return (
     <Portal>
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0c1030]/55 px-4 py-[8vh] backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-50 overflow-y-auto bg-[#0c1030]/55 backdrop-blur-sm animate-fade-in"
       onClick={onClose}
     >
+      {/* Centred in the viewport; a dialog taller than it scrolls from its top rather than losing its head. */}
+      <div className="flex min-h-full items-center justify-center px-4 py-6">
       <div
         role="dialog"
         aria-modal="true"
@@ -832,29 +858,70 @@ export function Modal({
         onClick={(event) => event.stopPropagation()}
         className={cx("card w-full shadow-pop animate-pop-in", MODAL_WIDTHS[size])}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-rule px-5 py-4">
-          <div className="min-w-0">
-            <h2 id={titleId} className="text-base font-bold tracking-tight">
-              {title}
-            </h2>
-            {description ? (
-              <p className="mt-0.5 text-[13px] leading-relaxed text-ink-2">{description}</p>
-            ) : null}
+        {icon ? (
+          <div className="flex items-start gap-4 px-5 pt-5 pb-1 sm:px-6 sm:pt-6">
+            <span className="inline-flex size-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+              <Icon name={icon} className="size-7" strokeWidth={1.75} />
+            </span>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <h2 id={titleId} className="display text-[1.375rem]">
+                {title}
+              </h2>
+              {description ? (
+                <p className="mt-1.5 text-[14px] leading-relaxed text-ink-2">{description}</p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="-mr-1 -mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-rule bg-surface text-ink-2 shadow-xs transition-colors hover:border-accent/40 hover:text-ink"
+            >
+              <Icon name="x" className="size-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="-mr-1.5 -mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-control text-ink-3 transition-colors hover:bg-sunken hover:text-ink"
-          >
-            <Icon name="x" />
-          </button>
-        </div>
+        ) : (
+          <div className="flex items-start justify-between gap-4 border-b border-rule px-5 py-4">
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-base font-bold tracking-tight">
+                {title}
+              </h2>
+              {description ? (
+                <p className="mt-0.5 text-[13px] leading-relaxed text-ink-2">{description}</p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="-mr-1.5 -mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-control text-ink-3 transition-colors hover:bg-sunken hover:text-ink"
+            >
+              <Icon name="x" />
+            </button>
+          </div>
+        )}
         {children}
+      </div>
       </div>
     </div>
     </Portal>
   );
+}
+
+/**
+ * `<form onSubmit={submitWith(fn)}>` — the same `fn(formData)` as
+ * `<form action={fn}>`, minus React 19's automatic reset. A form action
+ * resets every uncontrolled field the moment it runs, so a form that comes
+ * back from the server with an error would be empty by the time the error
+ * showed. Here the fields keep what was typed; a form that wants to clear
+ * itself on success calls `reset()` on its own ref.
+ */
+export function submitWith(fn: (data: FormData) => void | Promise<unknown>) {
+  return (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    void fn(new FormData(event.currentTarget, submitter));
+  };
 }
 
 /** The action strip at the foot of a modal form. Place it inside the form. */
@@ -877,14 +944,30 @@ export function ModalFooter({
 /* Identity                                                                 */
 /* ------------------------------------------------------------------------ */
 
+// Ten hues, each clearly distinct from its neighbours, so two clients side by
+// side in a list read as two people rather than two shades of the brand blue.
 const AVATAR_HUES = [
   "bg-gradient-to-br from-blue-500 to-indigo-600",
-  "bg-gradient-to-br from-sky-500 to-blue-600",
   "bg-gradient-to-br from-emerald-500 to-teal-600",
-  "bg-gradient-to-br from-amber-500 to-orange-500",
+  "bg-gradient-to-br from-amber-500 to-orange-600",
   "bg-gradient-to-br from-rose-500 to-pink-600",
-  "bg-gradient-to-br from-cyan-500 to-blue-500",
+  "bg-gradient-to-br from-violet-500 to-purple-600",
+  "bg-gradient-to-br from-cyan-500 to-sky-600",
+  "bg-gradient-to-br from-lime-500 to-green-600",
+  "bg-gradient-to-br from-fuchsia-500 to-pink-600",
+  "bg-gradient-to-br from-orange-500 to-red-600",
+  "bg-gradient-to-br from-teal-500 to-cyan-700",
 ] as const;
+
+/** FNV-1a over the name: short names with a shared first word still spread across the palette. */
+function avatarHue(name: string): string {
+  let hash = 0x811c9dc5;
+  for (const char of name.trim().toLowerCase()) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return AVATAR_HUES[hash % AVATAR_HUES.length] ?? AVATAR_HUES[0];
+}
 
 const AVATAR_SIZES = {
   sm: "size-6 text-[10px]",
@@ -928,9 +1011,7 @@ export function Avatar({
       .map((part) => part[0]?.toUpperCase() ?? "")
       .join("") || "?";
 
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  const hue = AVATAR_HUES[hash % AVATAR_HUES.length];
+  const hue = avatarHue(name);
 
   return (
     <span

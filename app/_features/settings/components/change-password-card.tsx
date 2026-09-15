@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { changePassword } from "@/server/modules/auth/actions";
-import { Alert, Button, Card, CardHeader, PasswordField } from "@/ui/primitives";
+import { Alert, Button, Card, CardHeader, PasswordField, submitWith } from "@/ui/primitives";
 
 /** Change the signed-in person's password. Other sessions stay; a reset signs them all out. */
 export function ChangePasswordCard({ required }: { required: boolean }) {
@@ -35,7 +35,7 @@ export function ChangePasswordCard({ required }: { required: boolean }) {
   return (
     <Card>
       <CardHeader icon="shield" title="Password" description="Keep your account secure. Never share it or keep it in email." />
-      <form ref={formRef} action={submit} className="flex flex-col gap-3 px-5 py-4">
+      <form ref={formRef} onSubmit={submitWith(submit)} className="flex flex-col gap-3 px-5 py-4">
         {required ? (
           <Alert tone="warning" title="Choose a new password to continue">
             You signed in with a temporary password. Set your own before doing anything else.

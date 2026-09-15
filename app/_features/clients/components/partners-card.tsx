@@ -1,43 +1,19 @@
 "use client";
 
 /**
- * The partners of a partnership and their shares.
+ * The partners of a partnership and their shares, on the entity tab.
  *
- * Shares are edited as percentages and stored as basis points; the running
- * total is shown while typing, and the set cannot be saved until it is
- * exactly 100.00%. The server applies the same rule.
+ * Read-only table with an edit modal; the same fields as the second step
+ * of New Client, so what was skipped there can be completed here.
  */
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { savePartners } from "@/server/modules/clients/actions";
 import type { Partner } from "@/shared/contracts/client";
-import { basisPointsToInput, formatBasisPoints, parseBasisPoints } from "@/shared/money";
-import { Icon } from "@/ui/icons";
-import {
-  Alert,
-  Avatar,
-  Button,
-  Card,
-  CardHeader,
-  Modal,
-  ModalFooter,
-  cx,
-  inputClass,
-} from "@/ui/primitives";
-
-interface Draft {
-  key: number;
-  name: string;
-  share: string;
-}
-
-let nextKey = 1;
-const draftFrom = (partner?: Partner): Draft => ({
-  key: nextKey++,
-  name: partner?.name ?? "",
-  share: partner ? basisPointsToInput(partner.shareBasisPoints) : "",
-});
+import { formatBasisPoints } from "@/shared/money";
+import { Alert, Avatar, Button, Card, CardHeader, Modal, ModalFooter, cx } from "@/ui/primitives";
+import { PARTNERS_NOTE, PartnersFields, partnersDraftFrom, partnersPayload, partnersSummary, type PartnerDraft } from "./partners-fields";
 
 export function PartnersCard({ clientId, partners }: { clientId: string; partners: Partner[] }) {
   const [open, setOpen] = useState(false);
@@ -46,6 +22,7 @@ export function PartnersCard({ clientId, partners }: { clientId: string; partner
   return (
     <Card>
       <CardHeader
+        icon="users"
         title="Partners"
         description="Each partner's share of the partnership's profit."
         action={
@@ -91,47 +68,22 @@ export function PartnersCard({ clientId, partners }: { clientId: string; partner
         </table>
       )}
 
-      {open ? (
-        <PartnersModal clientId={clientId} partners={partners} onClose={() => setOpen(false)} />
-      ) : null}
+      {open ? <PartnersModal clientId={clientId} partners={partners} onClose={() => setOpen(false)} /> : null}
     </Card>
   );
 }
 
-function PartnersModal({
-  clientId,
-  partners,
-  onClose,
-}: {
-  clientId: string;
-  partners: Partner[];
-  onClose: () => void;
-}) {
+function PartnersModal({ clientId, partners, onClose }: { clientId: string; partners: Partner[]; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Draft[]>(() =>
-    partners.length > 0 ? partners.map(draftFrom) : [draftFrom(), draftFrom()],
-  );
-
-  const parsed = drafts.map((draft) => ({
-    name: draft.name.trim(),
-    shareBasisPoints: draft.share.trim() === "" ? null : parseBasisPoints(draft.share),
-  }));
-  const total = parsed.reduce((sum, p) => sum + (p.shareBasisPoints ?? 0), 0);
-  const complete = parsed.every((p) => p.name !== "" && p.shareBasisPoints !== null && p.shareBasisPoints > 0);
-  const canSave = complete && total === 10_000 && drafts.length > 0;
-
-  function update(key: number, patch: Partial<Draft>) {
-    setDrafts((current) => current.map((d) => (d.key === key ? { ...d, ...patch } : d)));
-  }
+  const [drafts, setDrafts] = useState<PartnerDraft[]>(() => partnersDraftFrom(partners));
+  const { canSave } = partnersSummary(drafts);
 
   function submit() {
     setError(null);
     startTransition(async () => {
-      const result = await savePartners(clientId, {
-        partners: parsed.map((p) => ({ name: p.name, shareBasisPoints: p.shareBasisPoints ?? 0 })),
-      });
+      const result = await savePartners(clientId, partnersPayload(drafts));
       if (result.ok) {
         onClose();
         router.refresh();
@@ -145,81 +97,20 @@ function PartnersModal({
     <Modal
       open
       onClose={onClose}
+      icon="users"
       title="Partners"
       description="Names and profit shares. The shares must add up to exactly 100%."
       size="lg"
     >
-      <div className="flex flex-col gap-4 px-5 py-5">
+      <div className="flex flex-col gap-4 px-5 py-5 sm:px-6">
         {error ? <Alert tone="negative">{error}</Alert> : null}
-
-        <div className="flex flex-col gap-2">
-          {drafts.map((draft, index) => (
-            <div key={draft.key} className="grid grid-cols-[1fr_8rem_2.5rem] items-center gap-2">
-              <input
-                value={draft.name}
-                maxLength={120}
-                onChange={(event) => update(draft.key, { name: event.target.value })}
-                placeholder={`Partner ${index + 1} full name`}
-                aria-label={`Partner ${index + 1} name`}
-                className={inputClass}
-              />
-              <div className="relative">
-                <input
-                  value={draft.share}
-                  inputMode="decimal"
-                  onChange={(event) => update(draft.key, { share: event.target.value })}
-                  placeholder="0.00"
-                  aria-label={`Partner ${index + 1} share`}
-                  aria-invalid={draft.share.trim() !== "" && parseBasisPoints(draft.share) === null ? true : undefined}
-                  className={cx(inputClass, "figure pr-8 text-right")}
-                />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-ink-3">
-                  %
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDrafts((current) => current.filter((d) => d.key !== draft.key))}
-                disabled={drafts.length <= 1}
-                aria-label={`Remove partner ${index + 1}`}
-                className="inline-flex size-10 items-center justify-center rounded-control text-ink-3 transition-colors hover:bg-sunken hover:text-negative disabled:opacity-30"
-              >
-                <Icon name="trash" className="size-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            icon="plus"
-            onClick={() => setDrafts((current) => [...current, draftFrom()])}
-          >
-            Add partner
-          </Button>
-          <p
-            className={cx(
-              "figure text-sm font-semibold",
-              total === 10_000 ? "text-positive-ink" : "text-warning-ink",
-            )}
-          >
-            Total {formatBasisPoints(total)}
-            {total !== 10_000 ? (
-              <span className="ml-2 font-normal">
-                ({total > 10_000 ? "over" : "under"} by {formatBasisPoints(Math.abs(10_000 - total))})
-              </span>
-            ) : null}
-          </p>
-        </div>
+        <PartnersFields drafts={drafts} onChange={setDrafts} />
       </div>
-
-      <ModalFooter note={canSave ? undefined : "Every partner needs a name and a share, and the shares must total 100%."}>
+      <ModalFooter note={canSave ? undefined : PARTNERS_NOTE}>
         <Button variant="secondary" onClick={onClose} disabled={pending}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={!canSave || pending}>
+        <Button icon="save" onClick={submit} disabled={!canSave || pending}>
           {pending ? "Saving…" : "Save partners"}
         </Button>
       </ModalFooter>

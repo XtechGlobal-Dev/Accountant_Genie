@@ -41,7 +41,7 @@ export default async function HomePage() {
   return (
     <div className="flex flex-col gap-6">
       {/* Welcome */}
-      <section className="mx-auto flex w-full max-w-5xl flex-col items-center gap-5 pt-8 text-center">
+      <section className="flex w-full flex-col items-center gap-5 pt-8 text-center">
         <div>
           <h1 className="display text-[2rem] lg:text-[2.25rem]">
             {greeting(now)}, {firstName}

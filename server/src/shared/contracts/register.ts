@@ -4,7 +4,7 @@
  * basis points.
  */
 
-import type { DepreciationMethod, LoanFrequency, LoanStatus } from "@/shared/enums";
+import type { AssetCategory, DepreciationMethod, LoanFrequency, LoanStatus, LoanType } from "@/shared/enums";
 
 export interface SubcontractorRow {
   id: string;
@@ -23,7 +23,12 @@ export interface AssetRow {
   id: string;
   name: string;
   description: string | null;
+  category: AssetCategory;
+  /** The depreciable cost. */
   costCents: number;
+  /** What was paid, GST included, when recorded. */
+  totalCostCents: number | null;
+  gstCents: number | null;
   purchaseDate: Date;
   method: DepreciationMethod;
   effectiveLifeMonths: number;
@@ -38,6 +43,7 @@ export interface AssetRow {
 
 export interface LoanRow {
   id: string;
+  type: LoanType;
   lender: string;
   description: string | null;
   principalCents: number;

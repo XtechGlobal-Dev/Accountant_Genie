@@ -23,7 +23,7 @@ import type { ChartAccountRow } from "@/shared/contracts/account";
 import type { ClientOption } from "@/shared/contracts/client";
 import type { GstTreatment } from "@/shared/enums";
 import { ACCOUNT_TYPE_LABELS, GST_TREATMENT_LABELS } from "@/shared/labels";
-import { Alert, Button, Field, Modal, ModalFooter, Select } from "@/ui/primitives";
+import { Alert, Button, Field, Modal, ModalFooter, Select, submitWith } from "@/ui/primitives";
 
 export function AccountModal({
   account,
@@ -90,7 +90,7 @@ export function AccountModal({
       }
       size="lg"
     >
-      <form action={handleSubmit}>
+      <form onSubmit={submitWith(handleSubmit)}>
         <div className="flex flex-col gap-5 px-5 py-5">
           {error && !field ? <Alert tone="negative">{error}</Alert> : null}
 

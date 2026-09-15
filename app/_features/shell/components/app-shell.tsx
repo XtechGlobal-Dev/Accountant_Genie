@@ -17,7 +17,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { BrandLogo, BrandMark, Icon, type IconName } from "@/ui/icons";
-import { Avatar, Badge, Kbd, cx, inputClass } from "@/ui/primitives";
+import { Avatar, Kbd, cx, inputClass } from "@/ui/primitives";
 import { buttonClass } from "@/ui/styles";
 import { ThemeToggle } from "@/features/shell/components/theme-toggle";
 import { Portal } from "@/ui/portal";
@@ -38,6 +38,8 @@ interface Item {
   readonly icon: IconName;
   readonly label: string;
   readonly badge?: string;
+  /** A live number that replaces `badge` while it is above zero. */
+  readonly count?: number;
   /** Exact match by default; `prefix` lights the item for every path below it. */
   readonly prefix?: boolean;
 }
@@ -139,7 +141,14 @@ function NavLink({
     >
       <Icon name={item.icon} className={cx("size-[18px] shrink-0", active ? "text-accent" : "text-ink-2")} strokeWidth={1.9} />
       <span className={cx("flex-1 truncate", collapsed && "lg:hidden")}>{item.label}</span>
-      {item.badge ? (
+      {item.count ? (
+        <span
+          title={`${item.count} transactions awaiting review`}
+          className={cx("figure rounded-full bg-negative px-2 py-0.5 text-[11px] font-bold text-white", collapsed && "lg:hidden")}
+        >
+          {item.count > 99 ? "99+" : item.count}
+        </span>
+      ) : item.badge ? (
         <span className={cx("rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white", collapsed && "lg:hidden")}>
           {item.badge}
         </span>
@@ -337,10 +346,16 @@ export function AppShell({
 
   const sidebar = (
     <>
-      {/* Brand, plan, support, account */}
-      <div className={cx("card flex items-center gap-2 p-2.5", collapsed && "lg:flex-col lg:gap-2")}>
-        <Link href="/" onClick={closeDrawer} title="Home" className="shrink-0">
-          <BrandMark className="size-10" />
+      {/* Brand, plan, support, account — one row; the mark alone when collapsed */}
+      <div className={cx("card flex items-center gap-2 px-3 py-2", collapsed && "lg:flex-col lg:gap-2 lg:px-2")}>
+        <Link href="/" onClick={closeDrawer} title="Home" className="flex shrink-0 items-center">
+          {/* Wrappers carry the show/hide so the brand components' own display classes cannot override it. */}
+          <span className={cx("flex items-center", collapsed && "lg:hidden")}>
+            <BrandLogo className="h-8" />
+          </span>
+          <span className={cx("hidden items-center", collapsed && "lg:flex")}>
+            <BrandMark className="size-10" />
+          </span>
         </Link>
         <span className={cx("flex-1", collapsed && "lg:hidden")} />
         {plan.code !== "SCALE" ? (
@@ -349,8 +364,8 @@ export function AppShell({
             onClick={closeDrawer}
             title="Plan & usage"
             className={cx(
-              "inline-flex h-9 items-center gap-1.5 rounded-full border border-warning/40 bg-warning-soft px-3 text-[12px] font-bold text-warning-ink transition-colors hover:border-warning",
-              collapsed && "lg:size-9 lg:px-0 lg:justify-center",
+              "inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-warning/40 bg-warning-soft px-2.5 text-[11px] font-bold text-warning-ink transition-colors hover:border-warning",
+              collapsed && "lg:size-8 lg:px-0 lg:justify-center",
             )}
           >
             <Icon name="gem" className="size-3.5" />
@@ -365,7 +380,7 @@ export function AppShell({
           }}
           aria-label="Support"
           title="Support"
-          className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-rule text-ink transition-colors hover:border-accent/40 hover:text-accent"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-rule text-ink transition-colors hover:border-accent/40 hover:text-accent"
         >
           <Icon name="headset" className="size-4" />
         </button>
@@ -377,7 +392,7 @@ export function AppShell({
           aria-expanded={userMenu}
           className="shrink-0 rounded-full ring-2 ring-transparent transition hover:ring-accent/30"
         >
-          <Avatar name={user.name} size="lg" />
+          <Avatar name={user.name} size="md" />
         </button>
         <Popover open={userMenu} onClose={() => setUserMenu(false)} label="Account" anchor={userMenuAnchor}>
           <div className="flex items-center gap-3 px-2.5 py-2.5">
@@ -456,7 +471,7 @@ export function AppShell({
           {FIRM_ITEMS.map((item) => (
             <NavLink
               key={item.href}
-              item={item}
+              item={item.href === "/reconcile" ? { ...item, count: attention } : item}
               active={item.prefix ? pathname === item.href || pathname.startsWith(`${item.href}/`) : pathname === item.href}
               collapsed={collapsed}
               onNavigate={closeDrawer}
@@ -619,15 +634,14 @@ export function AppShell({
         type="button"
         data-print-hide
         onClick={openActivityPanel}
-        aria-label={attention > 0 ? `Activity — ${attention} transactions awaiting review` : "Activity"}
+        aria-label="Activity"
         title="Activity"
         className="fixed bottom-6 right-6 z-40 inline-flex size-14 items-center justify-center rounded-full bg-surface shadow-pop ring-1 ring-rule transition-transform hover:scale-105 active:scale-95"
       >
         <span aria-hidden="true" className="relative size-9 rounded-full bg-[conic-gradient(from_180deg,#2563eb,#38bdf8,#6366f1,#2563eb)] shadow-glow animate-orb-spin" />
-        {attention > 0 ? <Badge tone="negative" className="absolute -right-1 -top-1">{attention > 99 ? "99+" : attention}</Badge> : null}
       </button>
 
-      <ActivityPanel />
+      <ActivityPanel attention={attention} />
       <HelpModal />
       <SupportWidget />
       <CommandPalette clients={clients} activeClient={activeClient} />

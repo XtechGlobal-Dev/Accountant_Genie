@@ -5,7 +5,8 @@ import { currentFinancialYear, quarterOf, quarterRange } from "@/server/au/fy";
 import { shortDate } from "@/shared/format";
 import { BANK_KIND_LABELS, IMPORT_STATUS_LABELS } from "@/shared/labels";
 import { AddNoteForm } from "@/features/clients/components/add-note-form";
-import { Badge, ButtonLink, Card, CardHeader, EmptyState, StatCard } from "@/ui/primitives";
+import { ClientEmptyState } from "@/features/clients/components/client-empty-state";
+import { Badge, ButtonLink, Card, CardHeader, StatCard } from "@/ui/primitives";
 
 /**
  * The client overview: where the work stands right now.
@@ -34,23 +35,7 @@ export default async function ClientOverviewPage({
   const quarter = quarterRange(fy, quarterOf(new Date()));
 
   if (bankAccounts.length === 0 && counts.transactions === 0 && journalCount === 0) {
-    return (
-      <EmptyState
-        icon="landmark"
-        title="No Data Found"
-        body="Connect a live bank feed or upload bank transactions under Banks, or post a journal entry to start a financial year."
-        action={
-          <ButtonLink size="lg" icon="external-link" className="rounded-full" href={`/clients/${id}/banks?feed=1`}>
-            Connect Live Bank Feed
-          </ButtonLink>
-        }
-        secondary={
-          <ButtonLink size="lg" variant="secondary" icon="upload" className="rounded-full" href={`/clients/${id}/banks`}>
-            Upload Bank File
-          </ButtonLink>
-        }
-      />
-    );
+    return <ClientEmptyState clientId={id} />;
   }
 
   return (

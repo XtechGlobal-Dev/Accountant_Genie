@@ -240,6 +240,8 @@ model Client {
   unitValueCents Int?
   email         String?
   phone         String?
+  /// Storage key of the uploaded logo. Served only through /clients/[id]/logo.
+  logoKey       String?
   /// The client's identity at the bank-feed provider. One Client is one Fiskil
   /// end user; it is created lazily, the first time a feed is connected.
   feedEndUserId String?      @unique
@@ -254,6 +256,8 @@ model Client {
   memoryRules    MemoryRule[]
   notes          ClientNote[]
   partners       Partner[]
+  trustee        Trustee?
+  beneficiaries  Beneficiary[]
   assets         Asset[]
   loans          Loan[]
   subcontractors Subcontractor[]
@@ -287,6 +291,47 @@ model Partner {
   name             String
   shareBasisPoints Int
   createdAt        DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+enum TrusteeKind {
+  CORPORATE
+  INDIVIDUAL
+}
+
+enum BeneficiaryKind {
+  INDIVIDUAL
+  COMPANY
+  TRUST
+}
+
+/// The trustee of a UNIT_TRUST or DISCRETIONARY_TRUST client. One per trust:
+/// a company (with the directors who sign for it) or an individual (with any
+/// co-trustees). Replaced whole with the beneficiaries, never edited alone.
+model Trustee {
+  id          String      @id @default(cuid())
+  clientId    String      @unique
+  kind        TrusteeKind
+  name        String
+  abn         String?
+  /// Who signs for the trustee: directors of a corporate trustee, or co-trustees.
+  signatories String[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+/// A beneficiary of a trust client. Distributions are prepared against this list.
+model Beneficiary {
+  id        String          @id @default(cuid())
+  clientId  String
+  name      String
+  kind      BeneficiaryKind @default(INDIVIDUAL)
+  createdAt DateTime        @default(now())
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
@@ -640,6 +685,18 @@ enum DepreciationMethod {
   DIMINISHING_VALUE
 }
 
+/// How the register groups assets. Descriptive only: the method and the
+/// effective life, not the category, decide the depreciation.
+enum AssetCategory {
+  COMPUTER_EQUIPMENT
+  FURNITURE_FIXTURES
+  OFFICE_EQUIPMENT
+  TOOLS_EQUIPMENT
+  MOTOR_VEHICLES
+  PLANT_EQUIPMENT
+  OTHER
+}
+
 /// A depreciable asset. Depreciation is computed by the schedule report from
 /// these facts and is never stored as a figure — a rule change must reproduce.
 model Asset {
@@ -647,7 +704,12 @@ model Asset {
   clientId               String
   name                   String
   description            String?
+  category               AssetCategory      @default(OTHER)
+  /// The depreciable cost — GST exclusive when the client claims the credit.
   costCents              Int
+  /// What was paid, GST included, and the GST in it. Recorded for the file; the schedule uses costCents.
+  totalCostCents         Int?
+  gstCents               Int?
   purchaseDate           DateTime
   method                 DepreciationMethod @default(DIMINISHING_VALUE)
   /// Effective life in months, so a 2.5-year life is exact.
@@ -678,11 +740,20 @@ enum LoanStatus {
   CLOSED
 }
 
+/// What kind of facility it is. Descriptive: the terms, not the type, drive the schedule.
+enum LoanType {
+  EQUIPMENT_FINANCE
+  EQUIPMENT_FINANCE_LONG_TERM
+  BANK_LOAN_LONG_TERM
+  BANK_LOAN
+}
+
 /// A loan facility. Repayments split principal from interest; the schedule
 /// report derives the split from these terms.
 model Loan {
   id                     String        @id @default(cuid())
   clientId               String
+  type                   LoanType      @default(BANK_LOAN)
   lender                 String
   description            String?
   principalCents         Int

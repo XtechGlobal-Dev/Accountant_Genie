@@ -11,9 +11,11 @@
 
 import type {
   BasFrequency,
+  BeneficiaryKind,
   EntityType,
   GstBasis,
   ImportStatus,
+  TrusteeKind,
 } from "@/shared/enums";
 
 /** One row of the client list. */
@@ -42,6 +44,8 @@ export interface ClientHeader {
   gstBasis: GstBasis;
   basFrequency: BasFrequency;
   archived: boolean;
+  /** A logo has been uploaded; fetch it from `/clients/[id]/logo`. */
+  hasLogo: boolean;
 }
 
 /** Everything on the details page, and everything the edit form writes back. */
@@ -64,6 +68,7 @@ export interface ClientDetail {
   /** Unit trust only. Integer cents. */
   unitValueCents: number | null;
   createdAt: Date;
+  hasLogo: boolean;
 }
 
 export interface ClientNote {
@@ -88,6 +93,29 @@ export interface Partner {
   id: string;
   name: string;
   shareBasisPoints: number;
+}
+
+/** The trustee of a trust client. */
+export interface Trustee {
+  id: string;
+  kind: TrusteeKind;
+  name: string;
+  abn: string | null;
+  /** Directors of a corporate trustee, or co-trustees of an individual one. */
+  signatories: string[];
+}
+
+/** A beneficiary of a trust client. */
+export interface Beneficiary {
+  id: string;
+  name: string;
+  kind: BeneficiaryKind;
+}
+
+/** Everything the entity tab shows for a unit or discretionary trust. */
+export interface TrustDetails {
+  trustee: Trustee | null;
+  beneficiaries: Beneficiary[];
 }
 
 /** Where the work stands on one client, right now. */

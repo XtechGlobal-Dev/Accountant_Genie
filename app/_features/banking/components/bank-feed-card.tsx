@@ -37,7 +37,8 @@ import type {
   FeedSyncRunRow,
 } from "@/shared/contracts/bank-account";
 import { shortDate } from "@/shared/format";
-import { Alert, Badge, Button, Card, CardHeader, Field, Modal, ModalFooter, Select } from "@/ui/primitives";
+import { Icon } from "@/ui/icons";
+import { Alert, Badge, Button, Card, CardHeader, Field, Modal, ModalFooter, Select, submitWith } from "@/ui/primitives";
 
 type Tone = "warning" | "positive" | "negative" | "neutral";
 
@@ -203,7 +204,7 @@ export function BankFeedCard({
         <h4 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Connections</h4>
         {providerConfigured && connections.length > 0 ? (
           <Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
             icon="refresh"
             disabled={busy === "refresh"}
@@ -217,11 +218,15 @@ export function BankFeedCard({
       </div>
 
       {connections.length === 0 ? (
-        <p className="px-5 py-4 text-sm leading-relaxed text-ink-2">
-          {providerConfigured
-            ? "No connection yet. Send the client a request, or start the consent together with them using Connect now."
-            : `No feed provider is configured for this environment, so approvals are recorded and statements are imported by upload. Set the ${providerName} keys to enable live connections.`}
-        </p>
+        <EmptyRow
+          icon="landmark"
+          title="No connection yet"
+          body={
+            providerConfigured
+              ? "Send the client a request, or start the consent together with them using Connect now."
+              : `Live connections are off in this environment: approvals are still recorded and statements come in by upload. Set the ${providerName} keys to enable them.`
+          }
+        />
       ) : (
         <table>
           <thead>
@@ -304,8 +309,9 @@ export function BankFeedCard({
 
                     {connection.canRevoke ? (
                       <Button
-                        variant="ghost"
+                        variant="secondary"
                         size="sm"
+                        icon="x-circle"
                         disabled={busy === connection.id}
                         onClick={() =>
                           run(
@@ -331,10 +337,11 @@ export function BankFeedCard({
         <h4 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Requests sent</h4>
       </div>
       {requests.length === 0 ? (
-        <p className="px-5 py-4 text-sm leading-relaxed text-ink-2">
-          No request sent yet. The client receives a secure link, reviews the request and approves
-          access through their bank. The answer shows here.
-        </p>
+        <EmptyRow
+          icon="send"
+          title="No request sent yet"
+          body="The client receives a secure link, reviews the request and approves access through their bank. The answer shows here."
+        />
       ) : (
         <table>
           <thead>
@@ -362,8 +369,9 @@ export function BankFeedCard({
                 <td className="text-right">
                   {request.status === "PENDING" ? (
                     <Button
-                      variant="ghost"
+                      variant="secondary"
                       size="sm"
+                      icon="undo"
                       disabled={busy === request.id}
                       onClick={() =>
                         run(request.id, () => cancelFeedRequest(clientId, request.id), "Request withdrawn.")
@@ -385,7 +393,7 @@ export function BankFeedCard({
         <>
           <div className="flex items-center justify-between border-t border-rule px-5 pt-4">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Sync history</h4>
-            <Button variant="ghost" size="sm" onClick={() => setShowRuns((open) => !open)}>
+            <Button variant="secondary" size="sm" icon={showRuns ? "eye-off" : "eye"} onClick={() => setShowRuns((open) => !open)}>
               {showRuns ? "Hide" : `Show ${syncRuns.length}`}
             </Button>
           </div>
@@ -434,7 +442,7 @@ export function BankFeedCard({
       </p>
 
       {modal?.kind === "request" ? (
-        <RequestModal clientId={clientId} onClose={() => setModal(null)} />
+        <FeedRequestModal clientId={clientId} onClose={() => setModal(null)} />
       ) : null}
       {modal?.kind === "connect" ? (
         <ConnectModal
@@ -453,7 +461,25 @@ export function BankFeedCard({
   );
 }
 
-function RequestModal({ clientId, onClose }: { clientId: string; onClose: () => void }) {
+/** An empty section of the card: what would be here, and how it gets here. */
+function EmptyRow({ icon, title, body }: { icon: "landmark" | "send"; title: string; body: string }) {
+  return (
+    <div className="px-5 pb-5 pt-3">
+      <div className="flex items-center gap-3.5 rounded-2xl border border-dashed border-rule bg-surface-2/60 px-4 py-3.5">
+        <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+          <Icon name={icon} className="size-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink">{title}</p>
+          <p className="mt-0.5 text-[13px] leading-relaxed text-ink-2">{body}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Also opened from the Banks empty state, where the card itself is not shown yet. */
+export function FeedRequestModal({ clientId, onClose }: { clientId: string; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -476,12 +502,14 @@ function RequestModal({ clientId, onClose }: { clientId: string; onClose: () => 
     <Modal
       open
       onClose={onClose}
+      icon="landmark"
+      size="lg"
       title="Request bank feed"
       description="We send the client a secure link. They review the request and approve access directly with their bank."
     >
       {sent !== null ? (
         <>
-          <div className="flex flex-col gap-3 px-5 py-5">
+          <div className="flex flex-col gap-3 px-5 py-5 sm:px-6">
             <Alert tone="positive" title="Request sent">
               The client has 14 days to respond. Its status shows on this page.
             </Alert>
@@ -497,17 +525,30 @@ function RequestModal({ clientId, onClose }: { clientId: string; onClose: () => 
           </ModalFooter>
         </>
       ) : (
-        <form action={submit}>
-          <div className="flex flex-col gap-4 px-5 py-5">
+        <form onSubmit={submitWith(submit)}>
+          <div className="flex flex-col gap-5 px-5 py-5 sm:px-6">
             {error ? <Alert tone="negative">{error}</Alert> : null}
             <Field
               label="Client email"
               name="email"
               type="email"
               required
+              icon="mail"
+              autoComplete="off"
               placeholder="name@client.com.au"
               hint="The bank sends a one-time code here during the consent, so it must be an address the client can read now."
             />
+            <div className="flex items-start gap-3.5 rounded-2xl bg-accent-soft/50 px-5 py-4">
+              <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-accent text-white">
+                <Icon name="info" className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[14px] font-semibold text-ink">Secure and read-only</p>
+                <p className="mt-0.5 text-[13px] leading-relaxed text-ink-2">
+                  Your client stays in control. We only request read-only access, and your client can revoke it at any time.
+                </p>
+              </div>
+            </div>
           </div>
           <ModalFooter>
             <Button variant="secondary" onClick={onClose} disabled={pending}>
@@ -592,7 +633,7 @@ function ConnectModal({
           : "Opens the bank consent window for the client to complete on this screen. Their banking credentials go to their bank, never to us."
       }
     >
-      <form action={submit}>
+      <form onSubmit={submitWith(submit)}>
         <div className="flex flex-col gap-4 px-5 py-5">
           {error ? <Alert tone="negative">{error}</Alert> : null}
           <Field

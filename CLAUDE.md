@@ -320,7 +320,7 @@ unauthenticated payload.
 - Modules: `auth` (sign-in + email code, throttled; sign-up, reset, change password, team,
   roles; Google OIDC when configured; **trusted devices** — a browser that has proved a
   code may skip it for 30 days, opt-in per browser, bound to the user, listed and
-  revocable under Settings, and retired wholesale by any password change), `clients`, `banking` (accounts, feed requests with a
+  revocable under Settings, and retired wholesale by any password change), `clients` (partners with shares for partnerships and trustee + beneficiaries for trusts, each taken as the second step of New Client and editable on the entity tab; a logo per client, sniffed as PNG/JPEG/WebP, kept in storage under the firm and served only through `/clients/[id]/logo`), `banking` (accounts, feed requests with a
   public token page, feed connections via a provider interface with a **Fiskil** implementation
   (CDR consents, auth sessions + Link SDK, live accounts and balances, webhook-driven sync),
   feed sync job), `ingest` (CSV and PDF parsing, dedup by fingerprint, stored original, job
@@ -332,7 +332,7 @@ unauthenticated payload.
   `accounts` (system + custom chart, CSV export, tax-agent verification of flagged
   treatments), `ledger`, `reports` (P&L, Balance Sheet, Trial Balance, General Ledger,
   Transactions, Simple BAS with lineage, TPAR, Depreciation, EOFY; Xero CSV and MYOB TXT
-  journal export), `assets`, `loans`, `subcontractors`, `billing` (plans, Stripe Checkout,
+  journal export; every report route shows the ways in until the client has a transaction or a journal), `assets` (category, amount paid and GST beside the depreciable cost), `loans` (facility type), `subcontractors`, `billing` (plans, Stripe Checkout,
   Customer Portal, signature-verified webhook with replay guard), `firms`, `tax-rules`
   (versioned values with `effective_from/to`; anyone proposes, only a tax agent verifies;
   depreciation thresholds and BAS W1/W2 mapping are read from verified versions and are

@@ -170,7 +170,13 @@ export function ClientsView({
                   <td className="text-ink-2">{ENTITY_LABELS[client.entityType]}</td>
                   <td>{client.gstRegistered ? <Badge tone="accent">Registered</Badge> : <Badge tone="neutral">Not registered</Badge>}</td>
                   <td className="text-right">
-                    <Button variant="ghost" size="sm" disabled={busy === client.id} onClick={() => toggleArchive([client.id], !client.archived)}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={client.archived ? "undo" : "archive"}
+                      disabled={busy === client.id}
+                      onClick={() => toggleArchive([client.id], !client.archived)}
+                    >
                       {client.archived ? "Restore" : "Archive"}
                     </Button>
                   </td>

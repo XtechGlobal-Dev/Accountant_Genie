@@ -8,13 +8,17 @@
 
 import type {
   AccountType,
+  AssetCategory,
   BankAccountKind,
   BasFrequency,
+  BeneficiaryKind,
   EntityType,
   GstBasis,
   GstTreatment,
   ImportStatus,
   JournalSource,
+  LoanType,
+  TrusteeKind,
   TxStatus,
 } from "@/shared/enums";
 import type { AccountScope } from "@/shared/contracts/account";
@@ -25,6 +29,34 @@ export const ENTITY_LABELS: Record<EntityType, string> = {
   SOLE_TRADER: "Sole trader",
   UNIT_TRUST: "Unit trust",
   DISCRETIONARY_TRUST: "Discretionary trust",
+};
+
+export const TRUSTEE_KIND_LABELS: Record<TrusteeKind, string> = {
+  CORPORATE: "Corporate trustee",
+  INDIVIDUAL: "Individual trustee",
+};
+
+export const BENEFICIARY_KIND_LABELS: Record<BeneficiaryKind, string> = {
+  INDIVIDUAL: "Individual",
+  COMPANY: "Company",
+  TRUST: "Trust",
+};
+
+export const ASSET_CATEGORY_LABELS: Record<AssetCategory, string> = {
+  COMPUTER_EQUIPMENT: "Computer equipment",
+  FURNITURE_FIXTURES: "Furniture & fixtures",
+  OFFICE_EQUIPMENT: "Office equipment & machinery",
+  TOOLS_EQUIPMENT: "Tools & equipment",
+  MOTOR_VEHICLES: "Motor vehicles",
+  PLANT_EQUIPMENT: "Plant & equipment",
+  OTHER: "Other",
+};
+
+export const LOAN_TYPE_LABELS: Record<LoanType, string> = {
+  EQUIPMENT_FINANCE: "Equipment finance",
+  EQUIPMENT_FINANCE_LONG_TERM: "Equipment finance, long term",
+  BANK_LOAN_LONG_TERM: "Bank loan, long term",
+  BANK_LOAN: "Bank loan",
 };
 
 export const GST_BASIS_LABELS: Record<GstBasis, string> = {

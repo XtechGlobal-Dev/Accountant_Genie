@@ -21,7 +21,6 @@ import {
   Button,
   Card,
   CardHeader,
-  EmptyState,
   Field,
   Modal,
   ModalFooter,
@@ -29,7 +28,7 @@ import {
   cx,
 } from "@/ui/primitives";
 import { UploadStatementModal } from "./upload-statement-modal";
-import { BankFeedCard } from "./bank-feed-card";
+import { BankFeedCard, FeedRequestModal } from "./bank-feed-card";
 import type {
   BankAccountRow,
   FeedConnectionRow,
@@ -38,7 +37,8 @@ import type {
   FeedSyncRunRow,
   LiveBalances,
 } from "@/shared/contracts/bank-account";
-import { Money } from "@/ui/primitives";
+import { Money, submitWith } from "@/ui/primitives";
+import { EmptyHero, HeroAction } from "@/ui/empty-hero";
 
 type Editing = { mode: "new" } | { mode: "edit"; account: BankAccountRow } | null;
 
@@ -82,6 +82,11 @@ export function BankAccountsView({
   const [editing, setEditing] = useState<Editing>(null);
   const [upload, setUpload] = useState<{ bankAccountId?: string } | null>(openUpload ? {} : null);
 
+  // The feed card earns its place once there is an account, a request or a
+  // connection to show; before that the hero offers the feed on its own.
+  const showFeedCard = accounts.length > 0 || feedRequests.length > 0 || feedConnections.length > 0;
+  const [feedRequest, setFeedRequest] = useState(openFeed && !showFeedCard);
+
   function closeUpload() {
     setUpload(null);
     if (openUpload) router.replace(`/clients/${clientId}/banks`);
@@ -93,20 +98,23 @@ export function BankAccountsView({
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[15px] text-ink-2">
-          Statements import into an account, and its transactions become this
-          client&rsquo;s ledger.
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" icon="plus" onClick={() => setEditing({ mode: "new" })}>
-            Add bank account
-          </Button>
-          <Button icon="upload" onClick={() => setUpload({})} disabled={accounts.length === 0}>
-            Upload statement
-          </Button>
+      {/* With no account yet the hero below carries the ways in; the toolbar would only repeat them. */}
+      {accounts.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[15px] text-ink-2">
+            Statements import into an account, and its transactions become this
+            client&rsquo;s ledger.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" icon="plus" onClick={() => setEditing({ mode: "new" })}>
+              Add bank account
+            </Button>
+            <Button icon="upload" onClick={() => setUpload({})}>
+              Upload statement
+            </Button>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {liveBalanceError ? (
         <Alert tone="warning" title="Live balances unavailable">
@@ -115,21 +123,31 @@ export function BankAccountsView({
       ) : null}
 
       {accounts.length === 0 ? (
-        <EmptyState
-          icon="landmark"
-          title="No Data Found"
-          body="Connect a live bank feed, or add the account the client banks through and upload a bank file. Every transaction traces back to the account it came from."
-          action={
-            <Button size="lg" icon="external-link" className="rounded-full" onClick={() => window.dispatchEvent(new Event("ledgerly:open-feed-request"))}>
-              Connect Live Bank Feed
-            </Button>
-          }
-          secondary={
-            <Button size="lg" variant="secondary" icon="plus" className="rounded-full" onClick={() => setEditing({ mode: "new" })}>
-              Add Bank Account
-            </Button>
-          }
-        />
+        <EmptyHero
+          title="No bank accounts yet"
+          body="Connect a live feed and the accounts arrive on their own, or add the account the client banks through and upload a statement into it. Every transaction traces back to the account it came from."
+          className="min-h-0 py-12"
+          note={{
+            title: "Only the last few digits of an account number are stored",
+            body: "Never the full number, and never the client\u2019s banking credentials. A live feed runs through the Consumer Data Right: the client consents with their bank, the consent is time limited, and they can withdraw it at any time.",
+          }}
+        >
+          <div className="grid w-full gap-3 sm:grid-cols-2">
+            <HeroAction
+              primary
+              icon="link"
+              title="Connect Live Bank Feed"
+              body={providerConfigured ? "Send the client a secure request, or start the consent together" : "Send the client a secure request to approve with their bank"}
+              onClick={() => (showFeedCard ? window.dispatchEvent(new Event("ledgerly:open-feed-request")) : setFeedRequest(true))}
+            />
+            <HeroAction
+              icon="plus"
+              title="Add Bank Account"
+              body="Then upload a CSV or a bank statement PDF into it"
+              onClick={() => setEditing({ mode: "new" })}
+            />
+          </div>
+        </EmptyHero>
       ) : (
         <Card>
           <CardHeader
@@ -190,9 +208,9 @@ export function BankAccountsView({
                       {account.importCount.toLocaleString("en-AU")}
                     </td>
                     <td className="text-right">
-                      <span className="inline-flex items-center gap-1">
+                      <span className="inline-flex items-center gap-2">
                         <Button
-                          variant="ghost"
+                          variant="secondary"
                           size="sm"
                           icon="upload"
                           onClick={() => setUpload({ bankAccountId: account.id })}
@@ -200,8 +218,9 @@ export function BankAccountsView({
                           Upload
                         </Button>
                         <Button
-                          variant="ghost"
+                          variant="secondary"
                           size="sm"
+                          icon="pen"
                           onClick={() => setEditing({ mode: "edit", account })}
                         >
                           Edit
@@ -216,26 +235,32 @@ export function BankAccountsView({
         </Card>
       )}
 
-      <BankFeedCard
-        clientId={clientId}
-        requests={feedRequests}
-        connections={feedConnections}
-        institutions={feedInstitutions}
-        syncRuns={feedSyncRuns}
-        providerConfigured={providerConfigured}
-        providerName={providerName}
-        deliveryIsAutomatic={deliveryIsAutomatic}
-        justConnected={justConnected}
-        openRequest={openFeed}
-      />
+      {showFeedCard ? (
+        <BankFeedCard
+          clientId={clientId}
+          requests={feedRequests}
+          connections={feedConnections}
+          institutions={feedInstitutions}
+          syncRuns={feedSyncRuns}
+          providerConfigured={providerConfigured}
+          providerName={providerName}
+          deliveryIsAutomatic={deliveryIsAutomatic}
+          justConnected={justConnected}
+          openRequest={openFeed}
+        />
+      ) : null}
 
-      <p className="text-xs leading-relaxed text-ink-3">
-        Only the last few digits of an account number are stored — never the full
-        number, and never the client&rsquo;s banking credentials.
-        {hasLiveBalances
-          ? " Balances are read from the bank each time this page loads and are never stored, so they are current rather than as at the last sync."
-          : ""}
-      </p>
+      {feedRequest ? <FeedRequestModal clientId={clientId} onClose={() => setFeedRequest(false)} /> : null}
+
+      {accounts.length > 0 ? (
+        <p className="text-xs leading-relaxed text-ink-3">
+          Only the last few digits of an account number are stored — never the full
+          number, and never the client&rsquo;s banking credentials.
+          {hasLiveBalances
+            ? " Balances are read from the bank each time this page loads and are never stored, so they are current rather than as at the last sync."
+            : ""}
+        </p>
+      ) : null}
 
       {/* Mounted per target, and keyed by it: the modal's own state — the Cash
           at Bank switch — then starts from the row that opened it. */}
@@ -309,7 +334,7 @@ function BankAccountModal({
           : "The account the client banks through. Statements import into it."
       }
     >
-      <form action={handleSubmit}>
+      <form onSubmit={submitWith(handleSubmit)}>
         <div className="flex flex-col gap-5 px-5 py-5">
           {error && !field ? <Alert tone="negative">{error}</Alert> : null}
 

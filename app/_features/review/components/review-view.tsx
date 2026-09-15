@@ -37,6 +37,7 @@ import {
   ModalFooter,
   Money,
   PageHeader,
+  buttonClass,
   cx,
   inputClass,
 } from "@/ui/primitives";
@@ -344,10 +345,10 @@ export function ReviewView({
         />
       ) : (
         <div className="sheet overflow-x-auto">
-          <table className="min-w-[64rem]">
+          <table className="review min-w-[58rem]">
             <thead>
               <tr>
-                <th className="w-10">
+                <th className="w-12">
                   <input
                     type="checkbox"
                     aria-label="Select all visible"
@@ -358,14 +359,12 @@ export function ReviewView({
                     className="size-4 accent-accent"
                   />
                 </th>
-                <th className="w-28">Date</th>
+                <th className="w-24">Date</th>
                 <th>Description</th>
                 <th className="w-32 text-right">Amount</th>
-                <th className="w-64">Account</th>
-                <th className="w-36">Tax code</th>
-                <th className="w-24 text-right">GST</th>
+                <th className="w-[19rem]">Coding</th>
                 <th className="w-28">Status</th>
-                <th className="w-44 text-right">
+                <th className="w-52 text-right">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -374,6 +373,7 @@ export function ReviewView({
               {visible.map((row, index) => {
                 const active = index === cursor;
                 const level = confidenceLevel(row);
+                const [day, month, year] = shortDate(row.date).split(" ");
                 return (
                   <tr
                     key={row.id}
@@ -398,83 +398,127 @@ export function ReviewView({
                         className="size-4 accent-accent"
                       />
                     </td>
-                    <td className="figure text-ink-2">{shortDate(row.date)}</td>
+                    <td className="figure">
+                      <span className="block text-[13px] font-semibold text-ink">
+                        {day} {month}
+                      </span>
+                      <span className="block text-xs text-ink-3">{year}</span>
+                    </td>
                     <td>
-                      <span className="block max-w-[28rem] truncate font-medium" title={row.description}>
+                      <span className="block max-w-[26rem] truncate text-[14px] font-semibold text-ink" title={row.description}>
                         {row.description}
                       </span>
-                      <span className="block truncate text-xs text-ink-3" title={row.reasoning ?? undefined}>
-                        {row.bankAccountName}
-                        {row.reasoning ? ` · ${row.reasoning}` : ""}
-                        {row.excludeReason ? ` · excluded: ${row.excludeReason}` : ""}
+                      <span className="mt-1 flex max-w-[26rem] items-center gap-1.5 text-xs text-ink-3">
+                        <Icon name="landmark" className="size-3 shrink-0" />
+                        <span className="shrink-0">{row.bankAccountName}</span>
+                        {row.reasoning ? (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="truncate" title={row.reasoning}>
+                              {row.reasoning}
+                            </span>
+                          </>
+                        ) : null}
+                        {row.excludeReason ? (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="truncate text-negative-ink">Excluded: {row.excludeReason}</span>
+                          </>
+                        ) : null}
                       </span>
                     </td>
-                    <td className="text-right">
-                      <Money cents={row.amountCents} />
+                    <td className="figure text-right">
+                      <span className="text-[14px] font-semibold">
+                        <Money cents={row.amountCents} />
+                      </span>
                     </td>
                     <td>
                       {row.accountCode !== null ? (
-                        <span className="flex items-center gap-2">
-                          <span className="code text-ink-3">{row.accountCode}</span>
-                          <span className="truncate">{row.accountName}</span>
-                          {row.source ? (
-                            <Badge tone={row.source === "AI" ? "accent" : "neutral"}>{SOURCE_LABELS[row.source]}</Badge>
-                          ) : null}
-                          {row.risk === "HIGH" ? <Badge tone="warning">High risk</Badge> : null}
-                        </span>
+                        <>
+                          <span className="flex items-center gap-2">
+                            <span className="code shrink-0 rounded-md bg-sunken px-1.5 py-0.5 text-[11px] text-ink-2">{row.accountCode}</span>
+                            <span className="truncate text-[13px] font-medium text-ink">{row.accountName}</span>
+                          </span>
+                          <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-3">
+                            <span>{row.gstTreatment ? GST_TREATMENT_LABELS[row.gstTreatment] : "No tax code"}</span>
+                            {row.gstCents !== 0 ? (
+                              <span className="figure">
+                                <span aria-hidden="true">· </span>GST <Money cents={row.gstCents} />
+                              </span>
+                            ) : null}
+                            {row.source ? (
+                              <Badge tone={row.source === "AI" ? "accent" : "neutral"} className="!text-[10px]">
+                                {SOURCE_LABELS[row.source]}
+                              </Badge>
+                            ) : null}
+                            {row.risk === "HIGH" ? (
+                              <Badge tone="warning" className="!text-[10px]">
+                                High risk
+                              </Badge>
+                            ) : null}
+                          </span>
+                        </>
                       ) : (
-                        <span className="text-ink-3">Not coded</span>
+                        <span className="text-[13px] text-ink-3">Not coded yet</span>
                       )}
-                    </td>
-                    <td className="text-ink-2">
-                      {row.gstTreatment ? GST_TREATMENT_LABELS[row.gstTreatment] : "—"}
-                    </td>
-                    <td className="text-right text-ink-2">
-                      {row.gstCents !== 0 ? <Money cents={row.gstCents} /> : <span className="text-ink-3">—</span>}
                     </td>
                     <td>
                       {row.excludedAt ? (
                         <Badge tone="neutral">Excluded</Badge>
                       ) : row.status === "REVIEWED" ? (
-                        <Badge tone="positive">Accepted</Badge>
+                        <Badge tone="positive" dot>
+                          Accepted
+                        </Badge>
                       ) : row.status === "PENDING" ? (
                         <Badge tone="outline">Not coded</Badge>
                       ) : row.needsReview ? (
-                        <Badge tone="warning">Review</Badge>
+                        <Badge tone="warning" dot>
+                          Review
+                        </Badge>
                       ) : (
-                        <Badge tone="accent">Ready</Badge>
+                        <Badge tone="accent" dot>
+                          Ready
+                        </Badge>
                       )}
                     </td>
                     <td className="text-right">
-                      <span className="inline-flex items-center gap-1">
+                      <span className="inline-flex items-center gap-2">
                         {row.excludedAt ? (
-                          <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(() => restoreTransaction(clientId, row.id))}>
+                          <Button variant="secondary" size="sm" icon="undo" disabled={busy} onClick={() => run(() => restoreTransaction(clientId, row.id))}>
                             Restore
                           </Button>
                         ) : row.status === "REVIEWED" ? (
                           <>
                             {row.journalEntryId ? (
-                              <Link href={`/clients/${clientId}/journals/${row.journalEntryId}`} className="text-xs font-medium text-accent hover:underline">
+                              <Link href={`/clients/${clientId}/journals/${row.journalEntryId}`} className={buttonClass({ variant: "soft", size: "sm" })}>
+                                <Icon name="book-open" className="size-3.5" />
                                 Journal
                               </Link>
                             ) : null}
-                            <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(() => reopenTransaction(clientId, row.id))}>
+                            <Button variant="secondary" size="sm" icon="undo" disabled={busy} onClick={() => run(() => reopenTransaction(clientId, row.id))}>
                               Reopen
                             </Button>
                           </>
                         ) : (
                           <>
                             {canAccept(row) ? (
-                              <Button variant="ghost" size="sm" disabled={busy} onClick={() => accept([row.id])}>
+                              <Button variant="soft" size="sm" icon="check" disabled={busy} onClick={() => accept([row.id])}>
                                 Accept
                               </Button>
                             ) : null}
-                            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setRecode(row)}>
+                            <Button variant="secondary" size="sm" icon="pen" disabled={busy} onClick={() => setRecode(row)}>
                               Recode
                             </Button>
-                            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setExclude(row)} aria-label="Exclude">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setExclude(row)}
+                              aria-label="Exclude"
+                              title="Exclude from the books"
+                              className="inline-flex size-9 items-center justify-center rounded-xl border border-rule bg-surface text-ink-2 shadow-xs transition-colors hover:border-negative/40 hover:bg-negative-soft hover:text-negative-ink disabled:cursor-not-allowed disabled:opacity-50"
+                            >
                               <Icon name="x-circle" className="size-4" />
-                            </Button>
+                            </button>
                           </>
                         )}
                       </span>

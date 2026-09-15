@@ -24,6 +24,7 @@ async function accountNames(firmId: string, rows: readonly Row[]): Promise<Map<s
 function toRow(row: Row, names: Map<string, string>): LoanRow {
   return {
     id: row.id,
+    type: row.type,
     lender: row.lender,
     description: row.description,
     principalCents: row.principalCents,
@@ -108,6 +109,7 @@ export async function createLoan(
   const id = await db.$transaction(async (tx) => {
     const created = await repo.create(tx, {
       clientId: client.id,
+      type: input.type,
       lender: input.lender,
       description: input.description || null,
       principalCents: input.principalCents,
@@ -145,6 +147,7 @@ export async function updateLoan(
 
   await db.$transaction(async (tx) => {
     await repo.update(tx, existing.id, {
+      type: input.type,
       lender: input.lender,
       description: input.description || null,
       principalCents: input.principalCents,

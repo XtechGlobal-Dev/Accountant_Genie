@@ -8,6 +8,7 @@ import type { Prisma } from "@/generated/prisma";
 const ROW_SELECT = {
   id: true,
   clientId: true,
+  type: true,
   lender: true,
   description: true,
   principalCents: true,

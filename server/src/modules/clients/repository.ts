@@ -39,6 +39,7 @@ const HEADER_SELECT = {
   gstBasis: true,
   basFrequency: true,
   archivedAt: true,
+  logoKey: true,
 } satisfies Prisma.ClientSelect;
 
 const DETAIL_SELECT = {
@@ -79,6 +80,13 @@ export function findClientDetail(firmId: string, clientId: string) {
   return db.client.findFirst({
     where: { id: clientId, firmId },
     select: DETAIL_SELECT,
+  });
+}
+
+export function findClientLogoKey(firmId: string, clientId: string) {
+  return db.client.findFirst({
+    where: { id: clientId, firmId },
+    select: { logoKey: true },
   });
 }
 
@@ -157,5 +165,48 @@ export async function replacePartners(
   await tx.partner.deleteMany({ where: { clientId } });
   await tx.partner.createMany({
     data: partners.map((partner) => ({ clientId, ...partner })),
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trust details                                                              */
+/* -------------------------------------------------------------------------- */
+
+export async function findTrustDetails(firmId: string, clientId: string) {
+  const [trustee, beneficiaries] = await Promise.all([
+    db.trustee.findFirst({
+      where: { clientId, client: { firmId } },
+      select: { id: true, kind: true, name: true, abn: true, signatories: true },
+    }),
+    db.beneficiary.findMany({
+      where: { clientId, client: { firmId } },
+      orderBy: [{ createdAt: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, kind: true },
+    }),
+  ]);
+  return { trustee, beneficiaries };
+}
+
+/**
+ * The trustee and the beneficiaries are replaced together: they describe one
+ * deed, and a half-updated pair would be read later as meaning something.
+ * Runs on the caller's transaction so the audit row lands with the change.
+ */
+export async function replaceTrustDetails(
+  tx: DbClient,
+  clientId: string,
+  input: {
+    trustee: { kind: "CORPORATE" | "INDIVIDUAL"; name: string; abn: string | null; signatories: string[] };
+    beneficiaries: ReadonlyArray<{ name: string; kind: "INDIVIDUAL" | "COMPANY" | "TRUST" }>;
+  },
+) {
+  await tx.trustee.upsert({
+    where: { clientId },
+    create: { clientId, ...input.trustee },
+    update: input.trustee,
+  });
+  await tx.beneficiary.deleteMany({ where: { clientId } });
+  await tx.beneficiary.createMany({
+    data: input.beneficiaries.map((beneficiary) => ({ clientId, ...beneficiary })),
   });
 }

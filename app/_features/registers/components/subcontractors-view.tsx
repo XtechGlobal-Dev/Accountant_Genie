@@ -24,6 +24,7 @@ import {
   Modal,
   ModalFooter,
   PageHeader,
+  submitWith,
 } from "@/ui/primitives";
 
 type Editing = { mode: "new" } | { mode: "edit"; row: SubcontractorRow } | null;
@@ -98,11 +99,11 @@ export function SubcontractorsView({ clientId, rows }: { clientId: string; rows:
                   </td>
                   <td className="figure text-right text-ink-2">{row.paymentCount}</td>
                   <td className="text-right">
-                    <span className="inline-flex items-center gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => setEditing({ mode: "edit", row })}>
+                    <span className="inline-flex items-center gap-2">
+                      <Button variant="secondary" size="sm" icon="pen" onClick={() => setEditing({ mode: "edit", row })}>
                         Edit
                       </Button>
-                      <Button variant="ghost" size="sm" disabled={busy === row.id} onClick={() => toggle(row)}>
+                      <Button variant="secondary" size="sm" icon={row.isActive ? "archive" : "undo"} disabled={busy === row.id} onClick={() => toggle(row)}>
                         {row.isActive ? "Deactivate" : "Reactivate"}
                       </Button>
                     </span>
@@ -160,7 +161,7 @@ function SubcontractorModal({
 
   return (
     <Modal open onClose={onClose} title={row ? "Edit subcontractor" : "New subcontractor"} description="Name and ABN are what the TPAR reports." size="lg">
-      <form action={submit}>
+      <form onSubmit={submitWith(submit)}>
         <div className="flex flex-col gap-4 px-5 py-5">
           {error && !field ? <Alert tone="negative">{error}</Alert> : null}
           <div className="grid gap-4 sm:grid-cols-2">
