@@ -18,5 +18,5 @@ storage/
 server/.env.*
 !server/.env.example
 
-# npm lockfile — this is a pnpm workspace
-package-lock.json
+# pnpm's lockfile, from before this was an npm workspace
+pnpm-lock.yaml

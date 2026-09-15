@@ -28,6 +28,23 @@ export default async function VerifyPage({
       <div className="mt-8">
         <AuthForm action={verifyCode} submitLabel="Verify Code" pendingLabel="Verifying…">
           <OtpInput />
+          {/*
+            Opt-in, and deliberately not ticked by default: an accountant signs
+            in from client sites and shared machines, and the safe answer for a
+            browser we know nothing about is to ask again.
+          */}
+          <label className="mx-auto flex max-w-sm cursor-pointer items-start gap-2.5 rounded-xl border border-rule bg-surface-2 px-3.5 py-3 text-left transition-colors hover:border-rule-strong">
+            <input
+              type="checkbox"
+              name="remember"
+              value="yes"
+              className="mt-0.5 size-4 shrink-0 accent-accent"
+            />
+            <span className="text-[13px] leading-snug text-ink-2">
+              <span className="block font-semibold text-ink">Remember this device for 30 days</span>
+              Skip this code next time on this browser. Your password is still asked for. Only on a device you own.
+            </span>
+          </label>
         </AuthForm>
       </div>
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">

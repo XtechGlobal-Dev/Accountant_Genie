@@ -2,14 +2,21 @@ import "server-only";
 
 import { createHash, randomInt } from "node:crypto";
 import { cookies } from "next/headers";
-import { db } from "@/server/core/db";
+import { db, type DbClient } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
 import { getMailer, mailIsConsoleOnly } from "@/server/core/mail";
 import { hashPassword, temporaryPassword, verifyPassword } from "@/server/core/password";
 import { createSession, destroyAllSessions, destroySession } from "@/server/core/session";
+import {
+  clearDeviceCookie,
+  currentDeviceHash,
+  deviceIsTrusted,
+  mintDeviceToken,
+  setDeviceCookie,
+} from "@/server/core/trusted-device";
 import { consume, minutesLeft, reset } from "@/server/core/rate-limit";
 import type { ActionResult } from "@/shared/contracts/result";
-import type { TeamMember } from "@/shared/contracts/settings";
+import type { TeamMember, TrustedDeviceRow } from "@/shared/contracts/settings";
 import type { OtpPurpose, UserRole } from "@/generated/prisma";
 import type { AuState, ProfessionalBody } from "@/generated/prisma";
 
@@ -153,12 +160,17 @@ export async function signIn(email: string, password: string, ip: string | null)
 
   const user = await db.user.findUnique({
     where: { email },
-    select: { id: true, email: true, passwordHash: true },
+    select: { id: true, email: true, firmId: true, passwordHash: true, mustChangePassword: true },
   });
   // Verify even when the user is missing so timing does not reveal existence.
   const valid = await verifyPassword(password, user?.passwordHash ?? null);
   if (!user || !valid) return { ok: false, error: GENERIC_SIGN_IN_ERROR };
   await reset(keyFor("signin:subject", email));
+
+  // This browser already proved a code for this account, and that trust has
+  // neither expired nor been revoked — so the second factor is remembered
+  // rather than asked for again. The password above was still required.
+  if (await deviceIsTrusted(user.id)) return completeSignIn(user, "device");
 
   const otpId = await issueCode(user.id, user.email, "SIGN_IN");
   await setPending(otpId);
@@ -169,16 +181,15 @@ export async function signIn(email: string, password: string, ip: string | null)
   };
 }
 
-export async function verifySignIn(code: string): Promise<StepResult> {
-  const redeemed = await redeemCode("SIGN_IN", code);
-  if (!redeemed.ok) return redeemed;
-
-  const user = await db.user.findUnique({
-    where: { id: redeemed.userId },
-    select: { id: true, firmId: true, mustChangePassword: true },
-  });
-  if (!user) return { ok: false, error: "Start again — the code has expired" };
-
+/**
+ * The last step of every sign-in: record it, start the session, and say
+ * where to go next. Shared by the code path and the trusted-device path so
+ * the two can never drift apart.
+ */
+async function completeSignIn(
+  user: { id: string; firmId: string; mustChangePassword: boolean },
+  via: "code" | "device",
+): Promise<StepResult> {
   await db.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: user.id },
@@ -190,11 +201,88 @@ export async function verifySignIn(code: string): Promise<StepResult> {
       action: "SIGNED_IN",
       entityType: "User",
       entityId: user.id,
+      // Which second factor was satisfied, and how, is the question an
+      // auditor asks of a sign-in that skipped the code.
+      after: { via },
     });
   });
   await clearPending();
   await createSession(user.id);
   return { ok: true, next: user.mustChangePassword ? "/settings?password=1" : "/", note: null };
+}
+
+/**
+ * Remember this browser, so the next sign-in on it is password-only.
+ *
+ * The row and its audit entry are written together; the cookie is set only
+ * once both are committed, so a browser is never carrying a token the
+ * database has no record of.
+ */
+async function rememberDevice(firmId: string, userId: string, label: string): Promise<void> {
+  // Whatever this browser was already carrying, read before the new token
+  // replaces it in the cookie jar.
+  const previous = await currentDeviceHash();
+  const { token, tokenHash, expiresAt } = mintDeviceToken();
+
+  await db.$transaction(async (tx) => {
+    // Signing in again on an already-trusted browser replaces that trust
+    // rather than adding to it. Without this the old row stays live for
+    // thirty days with no cookie pointing at it — unreachable, but sitting
+    // in Settings as a second "Chrome on Windows" nobody can tell apart
+    // from the real one, which is exactly the list people revoke from.
+    if (previous) {
+      await tx.trustedDevice.updateMany({
+        where: { userId, tokenHash: previous, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+    const device = await tx.trustedDevice.create({
+      data: { userId, tokenHash, label, expiresAt },
+      select: { id: true },
+    });
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      action: "DEVICE_TRUSTED",
+      entityType: "TrustedDevice",
+      entityId: device.id,
+      after: { label, expiresAt: expiresAt.toISOString(), replacedPrevious: previous !== null },
+    });
+  });
+  await setDeviceCookie(token, expiresAt);
+}
+
+/**
+ * Stop trusting every browser this user has. A new password must not leave
+ * a remembered second factor behind on a browser the person may no longer
+ * control.
+ *
+ * Takes the caller's transaction client so the count lands in the same
+ * audit row as the password change that caused it — a retired second factor
+ * that no record explains is exactly what an auditor would ask about.
+ * Returns how many browsers were live.
+ */
+async function forgetAllDevices(tx: DbClient, userId: string): Promise<number> {
+  const { count } = await tx.trustedDevice.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return count;
+}
+
+export async function verifySignIn(code: string, remember: boolean, label: string): Promise<StepResult> {
+  const redeemed = await redeemCode("SIGN_IN", code);
+  if (!redeemed.ok) return redeemed;
+
+  const user = await db.user.findUnique({
+    where: { id: redeemed.userId },
+    select: { id: true, firmId: true, mustChangePassword: true },
+  });
+  if (!user) return { ok: false, error: "Start again — the code has expired" };
+
+  // Opt-in, and only after the code was actually proved on this browser.
+  if (remember) await rememberDevice(user.firmId, user.id, label);
+  return completeSignIn(user, "code");
 }
 
 export async function signUp(input: {
@@ -325,9 +413,11 @@ export async function resetPassword(code: string, password: string): Promise<Ste
   const passwordHash = await hashPassword(password);
   await db.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { passwordHash, mustChangePassword: false } });
-    await recordAudit(tx, { firmId: user.firmId, userId: user.id, action: "PASSWORD_CHANGED", entityType: "User", entityId: user.id, after: { via: "reset" } });
+    const devicesForgotten = await forgetAllDevices(tx, user.id);
+    await recordAudit(tx, { firmId: user.firmId, userId: user.id, action: "PASSWORD_CHANGED", entityType: "User", entityId: user.id, after: { via: "reset", devicesForgotten } });
   });
   await destroyAllSessions(user.id);
+  await clearDeviceCookie();
   await clearPending();
   await createSession(user.id);
   return { ok: true, next: "/", note: null };
@@ -347,10 +437,75 @@ export async function changePassword(
   const passwordHash = await hashPassword(password);
   await db.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { passwordHash, mustChangePassword: false } });
-    await recordAudit(tx, { firmId, userId, action: "PASSWORD_CHANGED", entityType: "User", entityId: userId, after: { via: "settings" } });
+    const devicesForgotten = await forgetAllDevices(tx, user.id);
+    await recordAudit(tx, { firmId, userId, action: "PASSWORD_CHANGED", entityType: "User", entityId: userId, after: { via: "settings", devicesForgotten } });
   });
-  // Other browsers are signed out; this one keeps its session.
+  // Other browsers are signed out; this one keeps its session. Every
+  // remembered device is retired though, including this one: a new password
+  // means the second factor is proved again, everywhere.
+  await clearDeviceCookie();
   return { ok: true, id: userId };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trusted devices                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The browsers that may skip this person's six-digit code.
+ *
+ * Scoped to the signed-in user inside their own firm: one person's devices
+ * are never another's to see. The token hash is read to mark the current
+ * browser and is dropped before the rows leave this function.
+ */
+export async function listDevices(firmId: string, userId: string): Promise<TrustedDeviceRow[]> {
+  const rows = await db.trustedDevice.findMany({
+    where: { userId, user: { firmId }, revokedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: { lastUsedAt: "desc" },
+    select: { id: true, label: true, createdAt: true, lastUsedAt: true, expiresAt: true, tokenHash: true },
+  });
+  const current = await currentDeviceHash();
+  return rows.map((row) => ({
+    id: row.id,
+    label: row.label,
+    createdAt: row.createdAt,
+    lastUsedAt: row.lastUsedAt,
+    expiresAt: row.expiresAt,
+    isCurrent: row.tokenHash === current,
+  }));
+}
+
+/**
+ * Take the trust away from one browser; the next sign-in on it asks for a
+ * code again.
+ *
+ * Ownership is part of the query rather than a check afterwards: the row
+ * must belong to this user, in this firm. Another person's device id is
+ * simply not found.
+ */
+export async function revokeDevice(firmId: string, userId: string, deviceId: string): Promise<ActionResult> {
+  const device = await db.trustedDevice.findFirst({
+    where: { id: deviceId, userId, user: { firmId }, revokedAt: null },
+    select: { id: true, label: true, tokenHash: true },
+  });
+  if (!device) return { ok: false, error: "That device was not found" };
+
+  await db.$transaction(async (tx) => {
+    await tx.trustedDevice.update({ where: { id: device.id }, data: { revokedAt: new Date() } });
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      action: "DEVICE_REVOKED",
+      entityType: "TrustedDevice",
+      entityId: device.id,
+      before: { label: device.label },
+    });
+  });
+
+  // Forgetting the browser you are sitting at should drop its cookie too,
+  // or it keeps presenting a token that no longer means anything.
+  if ((await currentDeviceHash()) === device.tokenHash) await clearDeviceCookie();
+  return { ok: true, id: device.id };
 }
 
 /* -------------------------------------------------------------------------- */

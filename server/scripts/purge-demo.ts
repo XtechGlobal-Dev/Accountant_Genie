@@ -1,7 +1,7 @@
 /**
  * Removes the seeded demo firm and everything that hangs off it.
  *
- * `pnpm db:purge-demo`
+ * `npm run db:purge-demo`
  *
  * The seed (`prisma/seed.ts`) creates one firm, "Meridian Accounting" with the
  * fixed id `demo-firm`, plus its user, two clients, bank accounts, journals,
@@ -15,7 +15,7 @@
  *     rolls back if any of them would change
  *
  * `npm run dev` seeds only when the Firm table is empty, so once a real firm
- * exists the demo is not recreated. `pnpm db:seed` would bring it back.
+ * exists the demo is not recreated. `npm run db:seed` would bring it back.
  */
 import { Client } from "pg";
 

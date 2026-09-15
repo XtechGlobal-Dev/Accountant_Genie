@@ -109,6 +109,11 @@ export const OtpSchema = z.object({
     .trim()
     .transform((v) => v.replace(/\D/g, ""))
     .refine((v) => /^\d{6}$/.test(v), "Enter the six-digit code"),
+  /**
+   * "Remember this device for 30 days". Opt-in, and it only ever skips the
+   * code on this browser — the password is still asked for every time.
+   */
+  remember: z.coerce.boolean(),
 });
 
 export const ForgotSchema = z.object({ email });
@@ -154,7 +159,7 @@ export const fromForm = {
       agentNumber: text(f, "agentNumber"),
       howHeard: text(f, "howHeard"),
     }),
-  otp: (f: FormData) => OtpSchema.safeParse({ code: text(f, "code") }),
+  otp: (f: FormData) => OtpSchema.safeParse({ code: text(f, "code"), remember: text(f, "remember") === "yes" }),
   forgot: (f: FormData) => ForgotSchema.safeParse({ email: text(f, "email") }),
   reset: (f: FormData) => ResetPasswordSchema.safeParse({ code: text(f, "code"), password: text(f, "password") }),
   changePassword: (f: FormData) =>

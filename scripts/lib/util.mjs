@@ -53,7 +53,7 @@ export function binJs(pkgDir, pkgName, binName = pkgName) {
       );
     } catch {
       throw new Error(
-        `"${pkgName}" is not installed in ${path.relative(ROOT, pkgDir) || "."}. Run: pnpm install`,
+        `"${pkgName}" is not installed in ${path.relative(ROOT, pkgDir) || "."}. Run: npm install`,
       );
     }
   }
@@ -62,6 +62,19 @@ export function binJs(pkgDir, pkgName, binName = pkgName) {
   const rel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.[binName];
   if (!rel) throw new Error(`"${pkgName}" declares no bin entry named "${binName}"`);
   return path.resolve(path.dirname(pkgJsonPath), rel);
+}
+
+/**
+ * How to invoke npm on this platform, as a [command, args] pair.
+ *
+ * Windows npm is a .cmd shim, which Node cannot spawn directly — it needs
+ * cmd. Nothing path-shaped is passed as an argument, so the shell has
+ * nothing to split on this repo's path; the working directory goes through
+ * spawn's own `cwd`, which never reaches a shell. See binJs() above for the
+ * hazard this sidesteps.
+ */
+export function npmInvocation(args) {
+  return process.platform === "win32" ? ["cmd", ["/c", "npm", ...args]] : ["npm", args];
 }
 
 const label = (cmd, args) =>

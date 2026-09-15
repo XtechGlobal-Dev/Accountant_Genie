@@ -19,19 +19,34 @@ client and a schema that matches it.
 | Step | What happens | Fails how |
 |---|---|---|
 | 1. Environment | Loads `server/.env`. Missing? Copies `.env.example` and stops with instructions. Placeholder `DATABASE_URL`? Stops. | Exits 1 with what to fix |
-| 2. Dependencies | Checks `node_modules` in both packages, runs `pnpm install` if either is absent | Tells you to install pnpm |
+| 2. Dependencies | Checks the root `node_modules`, runs `npm install` if absent — one workspace install covers both packages | Repeats npm's own error |
 | 3. Prisma client | `prisma generate` → `server/generated/prisma` | Propagates the Prisma error |
 | 4. Database schema | `prisma db push`, then applies `prisma/sql/constraints.sql` | Propagates |
 | 5. Demo data | Seeds **only if the `Firm` table is empty** | Skips on any doubt |
-| 6. Starting | `next dev`, plus the BullMQ worker when `REDIS_URL` is set | One Ctrl-C stops everything |
+| 6. Starting | `next dev`, plus the BullMQ worker when `REDIS_URL` is set, then opens the app in your browser | One Ctrl-C stops everything |
 
 ```bash
 npm run dev                  # the whole pipeline, then the app
 npm run dev -- --port 4000   # different port
 npm run dev -- --seed        # force a reseed even if data exists
+npm run dev -- --no-open     # do not open a browser
 npm run dev:fast             # skip steps 3–5 (nothing schema-related changed)
 npm run dev:app              # raw `next dev`, no preflight at all
 ```
+
+### Opening the browser
+
+Step 6 opens `http://localhost:<port>` once the server actually answers, not
+when `next dev` is spawned — the first compile takes seconds, and opening
+early lands on a connection error. The poll runs in the background, so the
+terminal stays live and Ctrl-C during the first compile cancels the tab
+rather than racing it.
+
+It stays out of the way when it should: `--no-open`, `BROWSER=none` (the
+convention other dev servers follow) and any `CI` environment all skip it.
+`npm run dev:app` never opens anything — it is raw `next dev`.
+
+---
 
 ### Two deliberate safety properties
 

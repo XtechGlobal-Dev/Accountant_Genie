@@ -1,7 +1,7 @@
 /**
  * The BullMQ worker. Run alongside the app when `REDIS_URL` is set:
  *
- *   pnpm worker
+ *   npm run worker
  *
  * Every job's logic lives in `server/jobs/handlers.ts`; this process only
  * pulls ids off the queue and hands them to `runJob`, the same function the

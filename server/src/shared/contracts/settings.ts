@@ -44,6 +44,22 @@ export interface TeamMember {
   mustChangePassword: boolean;
 }
 
+/**
+ * One browser that may skip the six-digit code, as Settings lists it.
+ *
+ * No token, no hash and no address: the list exists so someone recognises
+ * their own laptop and can take the trust away from one they do not.
+ */
+export interface TrustedDeviceRow {
+  id: string;
+  label: string;
+  createdAt: Date;
+  lastUsedAt: Date;
+  expiresAt: Date;
+  /** The browser reading the page, which is the one you would not want to forget by mistake. */
+  isCurrent: boolean;
+}
+
 /** One line of the audit trail, as the settings page lists it. */
 export interface AuditRow {
   id: string;

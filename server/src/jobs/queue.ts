@@ -9,7 +9,7 @@ import { HANDLERS, type JobType } from "./handlers";
  *
  * A job is a row first. Enqueueing writes the row (its idempotency key makes
  * a double submit a no-op) and then dispatches it: to BullMQ when
- * `REDIS_URL` is set and a worker is running (`pnpm worker`), otherwise to an
+ * `REDIS_URL` is set and a worker is running (`npm run worker`), otherwise to an
  * in-process runner on the next tick — the prototype default, which needs
  * no infrastructure and gives the same stage events.
  *

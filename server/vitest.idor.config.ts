@@ -16,7 +16,7 @@ try {
  * and asserts that a user of Firm A receives "not found" for every resource of
  * Firm B, through the same services the routes call.
  *
- *   pnpm test:idor
+ *   npm run test:idor
  *
  * It creates two throwaway firms and removes them afterwards. Never point it
  * at production.

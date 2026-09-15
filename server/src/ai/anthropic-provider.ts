@@ -45,6 +45,15 @@ export class AnthropicProvider implements AccountingAIProvider {
     this.model = model;
   }
 
+  /**
+   * Note for anyone matching this to the OpenAI provider: do NOT add
+   * `temperature: 0` here.
+   *
+   * Sampling parameters were removed on the current Claude models -
+   * `temperature`, `top_p` and `top_k` return a 400 on Opus 5, Opus 4.8/4.7
+   * and Sonnet 5. Adding one to pin determinism would take the whole AI tier
+   * offline rather than steady it. Depth is controlled by `output_config.effort`.
+   */
   async classifyTransactions(input: ClassificationInput): Promise<ClassificationResponse> {
     const meta = {
       provider: this.name,

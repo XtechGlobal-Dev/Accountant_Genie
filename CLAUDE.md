@@ -156,15 +156,16 @@ Violating any of these is a defect regardless of test status.
 
 ## 7. Layout
 
-The frontend and the backend are **two packages in one pnpm workspace**, and the root reads
+The frontend and the backend are **two packages in one npm workspace**, and the root reads
 as exactly that: `app/` is the frontend, `server/` is the backend, and there is nothing else
 at the top level but `public/`, `docs/` and the Next.js config files.
 
-`server/` owns its own `package.json`, `tsconfig.json` and `.env`. Prisma, Zod, Stripe, BullMQ,
-the AI SDK and the S3 client are installed into `server/node_modules` and are simply not
-resolvable from the frontend. `next` and `react` stay at the root and are declared as *peer*
-dependencies of the server package (`autoInstallPeers: false`), so one copy of React exists in
-the process, not two.
+`server/` owns its own `package.json`, `tsconfig.json` and `.env`, and declares its own
+dependencies — Prisma, Zod, Stripe, BullMQ, the AI SDK, the S3 client. npm hoists a workspace's
+packages to the root `node_modules`, so those are physically resolvable from either side; the
+boundary that actually holds is `server-only`, below. `next` is declared a *peer* of the server
+package and provided by the root, which npm satisfies by deduplication — one copy of React and
+Next in the process, not two. `npm ls react next` is how you check that still holds.
 
 The boundary is still enforced by code, not convention: `core/db.ts` and every repository and
 service import `server-only`, so a client component that reaches the domain fails the build.
@@ -245,37 +246,39 @@ module's `actions.ts`, and a contract type from `@/shared/contracts/`. Nothing e
 ## 8. Commands
 
 ```bash
-pnpm install         # installs BOTH packages (pnpm workspace)
+npm install          # installs BOTH packages (npm workspace)
 npm run dev          # ← the only command needed to run locally
 
 # `npm run dev` (scripts/dev.mjs) does the backend first, then the frontend:
 #   1. loads server/.env — creates it from .env.example and stops if absent
-#   2. installs either package's node_modules if missing
+#   2. one npm install at the root if node_modules is missing
 #   3. prisma generate
 #   4. prisma db push + ledger CHECK constraints
 #   5. seeds ONLY if the Firm table is empty
-#   6. next dev, plus the BullMQ worker when REDIS_URL is set
+#   6. next dev, plus the BullMQ worker when REDIS_URL is set,
+#      then opens the browser once the app answers
 #
 #   npm run dev -- --port 4000   different port
 #   npm run dev -- --seed        force a reseed
+#   npm run dev -- --no-open     do not open a browser
 #   npm run dev:fast             skip steps 3-5
 #   npm run dev:app              raw `next dev`, no preflight
 
-pnpm db:check        # verify both Neon connection strings
-pnpm fiskil:check    # prove the Fiskil credentials against the live API (read-only)
-pnpm fiskil:check -- --transactions   # also sample payloads and re-verify the field mapping
-pnpm db:push         # sync schema (LOCAL ONLY — never staging/production)
-pnpm db:seed         # seed AU chart of accounts + demo data
-pnpm db:studio       # Prisma Studio
-pnpm db:reset        # destructive: reset + reseed
-pnpm db:purge-demo   # delete the seeded "Meridian Accounting" demo firm and everything under it; other firms untouched
-pnpm test            # unit tests (offline)
-pnpm test:idor       # cross-tenant suite (needs a real database)
-pnpm worker          # BullMQ worker
+npm run db:check     # verify both Neon connection strings
+npm run fiskil:check # prove the Fiskil credentials against the live API (read-only)
+npm run fiskil:check -- --transactions   # also sample payloads and re-verify the field mapping
+npm run db:push      # sync schema (LOCAL ONLY — never staging/production)
+npm run db:seed      # seed AU chart of accounts + demo data
+npm run db:studio    # Prisma Studio
+npm run db:reset     # destructive: reset + reseed
+npm run db:purge-demo  # delete the seeded "Meridian Accounting" demo firm and everything under it; other firms untouched
+npm test             # unit tests (offline)
+npm run test:idor    # cross-tenant suite (needs a real database)
+npm run worker       # BullMQ worker
 ```
 
 Every backend command at the root is a thin delegate to the server package
-(`pnpm --filter @ledgerly/server ...`), which runs it with `server/` as its cwd — which is
+(`npm run <script> --workspace @ledgerly/server`), which runs it with `server/` as its cwd — which is
 why each backend entry point finds `server/.env` by loading a plain `.env` relative to itself.
 You can also run them from inside `server/` directly.
 
@@ -297,24 +300,27 @@ unauthenticated payload.
 **Feature-complete prototype across the phase plan, with the hardening list built.** Built:
 
 - `server/prisma/schema.prisma` — firms (plan, Stripe ids), users (roles, passwords, Google subject),
-  sessions, one-time codes, rate limits, clients, partners, accounts, bank accounts (feed ids),
+  sessions, trusted devices, one-time codes, rate limits, clients, partners, accounts, bank accounts (feed ids),
   feed requests and connections, imports (stored file, stage, failed rows), transactions
   (coding, lineage, review state), journals and lines (GST snapshot, subcontractor link),
   coding memory, assets (car flag), loans, subcontractors, jobs and job events, versioned tax
   rules, webhook events, append-only audit log
 - `server/prisma/migrations/` — baseline plus `20260908000001_constraints` (journal-line `CHECK`s,
   entry total, partner share, `NULLS NOT DISTINCT` on the system-account code index). Local
-  dev still uses `db push` + `pnpm db:constraints`; staging/production use `migrate deploy`.
-- `server/src/core/` — Prisma singleton; cookie session; `permissions.ts`; `password.ts`;
+  dev still uses `db push` + `npm run db:constraints`; staging/production use `migrate deploy`.
+- `server/src/core/` — Prisma singleton; cookie session; `trusted-device.ts` (second-factor
+  memory) + `device-label.ts`; `permissions.ts`; `password.ts`;
   `audit.ts`; `rate-limit.ts` (DB-backed, per subject and per IP); `mail.ts` (console or
   Resend); `storage.ts` (local disk or S3-compatible)
 - `server/src/jobs/` — `Job`/`JobEvent` queue: in-process runner by default, BullMQ worker
-  (`pnpm worker`) when `REDIS_URL` is set; retries with backoff, DEAD state, idempotency key;
+  (`npm run worker`) when `REDIS_URL` is set; retries with backoff, DEAD state, idempotency key;
   SSE progress at `/api/jobs/[id]/events` drives the Activity Panel and the upload modal
 - `server/src/au/` — GST treatments and the `/11` arithmetic, financial year helpers, ~70-account
   Australian chart of accounts
 - Modules: `auth` (sign-in + email code, throttled; sign-up, reset, change password, team,
-  roles; Google OIDC when configured), `clients`, `banking` (accounts, feed requests with a
+  roles; Google OIDC when configured; **trusted devices** — a browser that has proved a
+  code may skip it for 30 days, opt-in per browser, bound to the user, listed and
+  revocable under Settings, and retired wholesale by any password change), `clients`, `banking` (accounts, feed requests with a
   public token page, feed connections via a provider interface with a **Fiskil** implementation
   (CDR consents, auth sessions + Link SDK, live accounts and balances, webhook-driven sync),
   feed sync job), `ingest` (CSV and PDF parsing, dedup by fingerprint, stored original, job
@@ -344,7 +350,7 @@ unauthenticated payload.
   side list (profile, subscription with three plan cards, team, tax rules, audit trail),
   `/help` documentation page. The structure mirrors the workflow the firm already knows;
   every label, asset and line of copy is our own (§3).
-- Tests: `pnpm test` (unit, offline) and `pnpm test:idor` (cross-tenant suite against a real
+- Tests: `npm test` (unit, offline) and `npm run test:idor` (cross-tenant suite against a real
   database — every service must answer "not found" for another firm's records)
 
 **Integrations that are wired but not exercised end to end here:** Stripe, Resend, Google
@@ -364,7 +370,7 @@ not exist. This was checked, not assumed.
 
 **The `TransactionV2` field list is unpublished, so it was CONFIRMED FROM THE WIRE**
 (2026-09-11, 781 live sandbox transactions). Four of the obvious assumptions were wrong,
-and every one of them fails silently — `pnpm fiskil:check -- --transactions` is what
+and every one of them fails silently — `npm run fiskil:check -- --transactions` is what
 proved them and is what re-proves them when Fiskil changes something:
 
 | Field | The trap |

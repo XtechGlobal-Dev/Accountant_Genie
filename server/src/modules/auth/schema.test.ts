@@ -106,3 +106,37 @@ describe("sign-up", () => {
     expect(fromForm.signUp(form({ ...base, password: "short" })).success).toBe(false);
   });
 });
+
+/**
+ * "Remember this device" removes the second factor from the next sign-in on
+ * this browser, so the parse must only ever say yes when the box was ticked.
+ * An absent checkbox is the normal case: browsers do not submit unticked ones.
+ */
+describe("the one-time code", () => {
+  it("accepts six digits however they were typed", () => {
+    const parsed = fromForm.otp(form({ code: "233 672" }));
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.code).toBe("233672");
+  });
+
+  it("does not remember the device unless the box was ticked", () => {
+    const absent = fromForm.otp(form({ code: "233672" }));
+    expect(absent.success && absent.data.remember).toBe(false);
+
+    const ticked = fromForm.otp(form({ code: "233672", remember: "yes" }));
+    expect(ticked.success && ticked.data.remember).toBe(true);
+  });
+
+  it("treats any other value as not remembering, rather than as truthy", () => {
+    for (const value of ["no", "false", "0", "on", "true", "1"]) {
+      const parsed = fromForm.otp(form({ code: "233672", remember: value }));
+      expect(parsed.success && parsed.data.remember).toBe(value === "yes" ? true : false);
+    }
+  });
+
+  it("rejects a code that is not six digits", () => {
+    expect(fromForm.otp(form({ code: "23367" })).success).toBe(false);
+    expect(fromForm.otp(form({ code: "" })).success).toBe(false);
+  });
+});

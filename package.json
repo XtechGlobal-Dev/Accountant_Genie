@@ -3,46 +3,41 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.0.0",
+  "workspaces": [
+    "server"
+  ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:app": "next dev",
     "dev:fast": "node scripts/dev.mjs --skip-db",
-    "build": "pnpm --filter @ledgerly/server generate && next build",
+    "build": "npm run generate --workspace @ledgerly/server && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit -p .",
-    "bootstrap": "pnpm --filter @ledgerly/server bootstrap",
-    "db:push": "pnpm --filter @ledgerly/server db:push",
-    "db:seed": "pnpm --filter @ledgerly/server db:seed",
-    "db:reset": "pnpm --filter @ledgerly/server db:reset",
-    "db:check": "pnpm --filter @ledgerly/server db:check",
-    "db:studio": "pnpm --filter @ledgerly/server db:studio",
-    "db:constraints": "pnpm --filter @ledgerly/server db:constraints",
-    "db:purge-demo": "pnpm --filter @ledgerly/server db:purge-demo",
-    "ai:models": "pnpm --filter @ledgerly/server ai:models",
-    "worker": "pnpm --filter @ledgerly/server worker",
-    "test": "pnpm --filter @ledgerly/server test",
-    "test:watch": "pnpm --filter @ledgerly/server test:watch",
-    "test:idor": "pnpm --filter @ledgerly/server test:idor",
-    "fiskil:check": "pnpm --filter @ledgerly/server fiskil:check"
+    "bootstrap": "npm run bootstrap --workspace @ledgerly/server",
+    "db:push": "npm run db:push --workspace @ledgerly/server",
+    "db:seed": "npm run db:seed --workspace @ledgerly/server",
+    "db:reset": "npm run db:reset --workspace @ledgerly/server",
+    "db:check": "npm run db:check --workspace @ledgerly/server",
+    "db:studio": "npm run db:studio --workspace @ledgerly/server",
+    "db:constraints": "npm run db:constraints --workspace @ledgerly/server",
+    "db:purge-demo": "npm run db:purge-demo --workspace @ledgerly/server",
+    "ai:models": "npm run ai:models --workspace @ledgerly/server",
+    "ai:golden": "npm run ai:golden --workspace @ledgerly/server",
+    "worker": "npm run worker --workspace @ledgerly/server",
+    "test": "npm run test --workspace @ledgerly/server",
+    "test:watch": "npm run test:watch --workspace @ledgerly/server",
+    "test:idor": "npm run test:idor --workspace @ledgerly/server",
+    "fiskil:check": "npm run fiskil:check --workspace @ledgerly/server"
   },
   "dependencies": {
     "@fiskil/link": "0.1.10",
-    "@ledgerly/server": "workspace:*",
+    "@ledgerly/server": "*",
     "client-only": "0.0.1",
     "lucide-react": "1.41.0",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@prisma/engines",
-      "esbuild",
-      "msgpackr-extract",
-      "prisma"
-    ]
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",

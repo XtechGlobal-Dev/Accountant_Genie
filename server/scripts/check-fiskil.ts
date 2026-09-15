@@ -2,8 +2,8 @@
  * Proves the Fiskil credentials against the live API, through the same client
  * the application uses.
  *
- *   pnpm fiskil:check
- *   pnpm fiskil:check -- --transactions
+ *   npm run fiskil:check
+ *   npm run fiskil:check -- --transactions
  *
  * This exercises `src/modules/banking/fiskil/` rather than reimplementing the
  * calls, so a green run means the application's own transport, token cache,
