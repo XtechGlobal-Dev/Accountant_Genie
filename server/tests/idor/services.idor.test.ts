@@ -167,6 +167,10 @@ describe("Firm A cannot read Firm B", () => {
     expect(await clients.getClientDetail(a.firmId, b.clientId)).toBeNull();
     expect(await clients.getClientOverview(a.firmId, b.clientId)).toBeNull();
     expect(await clients.getPartners(a.firmId, b.clientId)).toBeNull();
+    expect(await clients.getTrustDetails(a.firmId, b.clientId)).toBeNull();
+    expect(await clients.getClientNotes(a.firmId, b.clientId)).toBeNull();
+    expect(await clients.getClientLogo(a.firmId, b.clientId)).toBeNull();
+    expect(await clients.hasClientLedgerData(a.firmId, b.clientId)).toBeNull();
     expect((await clients.listClients(a.firmId, false)).map((c) => c.id)).not.toContain(b.clientId);
   });
 
@@ -219,7 +223,15 @@ describe("Firm A cannot write to Firm B", () => {
   it("clients and partners", async () => {
     expect(await clients.setClientArchived(a.firmId, b.clientId, true)).toBe(false);
     expect(await clients.addClientNote(a.firmId, b.clientId, { title: "x", body: "y" })).toBe(false);
+    expect(await clients.removeClientLogo(a.firmId, b.clientId)).toBe(false);
+    expect(await clients.setClientLogo(a.firmId, b.clientId, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0]))).toMatchObject(notFound);
     expect(await clients.savePartners(a.firmId, a.userId, b.clientId, { partners: [{ name: "P", shareBasisPoints: 10_000 }] })).toMatchObject(notFound);
+    expect(
+      await clients.saveTrustDetails(a.firmId, a.userId, b.clientId, {
+        trustee: { kind: "CORPORATE", name: "T Pty Ltd", abn: "", signatories: [] },
+        beneficiaries: [{ name: "B", kind: "INDIVIDUAL" }],
+      }),
+    ).toMatchObject(notFound);
   });
 
   it("bank accounts and feeds", async () => {
@@ -271,11 +283,11 @@ describe("Firm A cannot write to Firm B", () => {
   });
 
   it("registers", async () => {
-    const assetInput = { name: "x", costCents: 100, purchaseDate: new Date(), method: "PRIME_COST" as const, effectiveLifeMonths: 12, privateUseBasisPoints: 0, isCar: false };
+    const assetInput = { name: "x", category: "OTHER" as const, totalCostCents: null, gstCents: null, costCents: 100, purchaseDate: new Date(), method: "PRIME_COST" as const, effectiveLifeMonths: 12, privateUseBasisPoints: 0, isCar: false };
     expect(await assets.createAsset(a.firmId, a.userId, b.clientId, assetInput)).toMatchObject(notFound);
     expect(await assets.updateAsset(a.firmId, a.userId, b.assetId, assetInput)).toMatchObject(notFound);
     expect(await assets.disposeAsset(a.firmId, a.userId, b.assetId, { disposedAt: new Date(), disposalCents: 0 })).toMatchObject(notFound);
-    const loanInput = { lender: "x", principalCents: 100, interestRateBasisPoints: 100, startDate: new Date(), termMonths: 12, repaymentCents: 10, frequency: "MONTHLY" as const };
+    const loanInput = { type: "BANK_LOAN" as const, lender: "x", principalCents: 100, interestRateBasisPoints: 100, startDate: new Date(), termMonths: 12, repaymentCents: 10, frequency: "MONTHLY" as const };
     expect(await loans.createLoan(a.firmId, a.userId, b.clientId, loanInput)).toMatchObject(notFound);
     expect(await loans.updateLoan(a.firmId, a.userId, b.loanId, loanInput)).toMatchObject(notFound);
     expect(await loans.setLoanStatus(a.firmId, a.userId, b.loanId, "CLOSED")).toMatchObject(notFound);

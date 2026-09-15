@@ -10,7 +10,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addClientNote } from "@/server/modules/clients/actions";
-import { Alert, Button, Field, cx, inputClass } from "@/ui/primitives";
+import { Alert, Button, Field, cx, inputClass, submitWith } from "@/ui/primitives";
 
 export function AddNoteForm({ clientId }: { clientId: string }) {
   const router = useRouter();
@@ -42,7 +42,7 @@ export function AddNoteForm({ clientId }: { clientId: string }) {
   }
 
   return (
-    <form ref={formRef} action={handleSubmit} className="flex flex-col gap-3">
+    <form ref={formRef} onSubmit={submitWith(handleSubmit)} className="flex flex-col gap-3">
       {error ? <Alert tone="negative">{error}</Alert> : null}
 
       <Field label="Title" name="title" required placeholder="e.g. Vehicle private use" />
@@ -63,7 +63,7 @@ export function AddNoteForm({ clientId }: { clientId: string }) {
 
       <div className="flex items-center justify-end gap-2">
         <Button
-          variant="ghost"
+          variant="secondary"
           size="sm"
           onClick={() => {
             setOpen(false);

@@ -7,7 +7,7 @@ import { abn as formatAbn } from "@/shared/format";
 import { BAS_FREQUENCY_LABELS, ENTITY_LABELS, GST_BASIS_LABELS } from "@/shared/labels";
 import { Icon } from "@/ui/icons";
 import { buttonClass } from "@/ui/styles";
-import { Badge } from "@/ui/primitives";
+import { Avatar, Badge } from "@/ui/primitives";
 
 /**
  * One client's workspace: a slim identity strip that stays put, and the
@@ -45,33 +45,41 @@ export default async function ClientLayout({
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <Link
-            href="/clients"
-            aria-label="All clients"
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-rule bg-surface text-ink-2 shadow-xs transition-colors hover:border-accent/40 hover:text-accent"
-          >
-            <Icon name="chevron-left" className="size-4" />
-          </Link>
-          <div className="min-w-0">
-            <h1 className="truncate text-[1.25rem] font-bold tracking-tight">{client.businessName}</h1>
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-2">
-              <span className="figure">ABN {formatAbn(client.abn)}</span>
-              <Badge tone="neutral">{ENTITY_LABELS[client.entityType]}</Badge>
-              {client.gstRegistered ? (
-                <Badge tone="accent">GST · {GST_BASIS_LABELS[client.gstBasis]} · BAS {BAS_FREQUENCY_LABELS[client.basFrequency].toLowerCase()}</Badge>
-              ) : (
-                <Badge tone="neutral">Not registered for GST</Badge>
-              )}
-              {client.archived ? <Badge tone="warning">Archived</Badge> : null}
-            </p>
-          </div>
-        </div>
-        <Link href={`/clients/${client.id}/journals?new=1`} className={buttonClass({ variant: "secondary", className: "rounded-full" })}>
-          <Icon name="book-open" />
-          Add Journal Entry
+      <header className="card flex flex-wrap items-center gap-3 px-4 py-3 sm:gap-4 sm:px-5">
+        <Link
+          href="/clients"
+          aria-label="All clients"
+          className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-rule bg-surface text-ink-2 shadow-xs transition-colors hover:border-accent/40 hover:text-accent"
+        >
+          <Icon name="chevron-left" className="size-4" />
         </Link>
+        <Avatar name={client.businessName} size="lg" src={client.hasLogo ? `/clients/${client.id}/logo` : null} className="shrink-0 shadow-xs" />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-[1.2rem] font-bold leading-tight tracking-tight">{client.businessName}</h1>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-2">
+            <span className="figure">
+              <span className="text-ink-3">ABN</span> {formatAbn(client.abn)}
+            </span>
+            <span aria-hidden="true" className="size-1 rounded-full bg-ink-3/50" />
+            <Badge tone="neutral">{ENTITY_LABELS[client.entityType]}</Badge>
+            {client.gstRegistered ? (
+              <Badge tone="accent">GST · {GST_BASIS_LABELS[client.gstBasis]} · BAS {BAS_FREQUENCY_LABELS[client.basFrequency].toLowerCase()}</Badge>
+            ) : (
+              <Badge tone="neutral">Not registered for GST</Badge>
+            )}
+            {client.archived ? <Badge tone="warning">Archived</Badge> : null}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2 max-sm:w-full max-sm:pl-12">
+          <Link href={`/clients/${client.id}/banks?upload=1`} className={buttonClass({ variant: "secondary", className: "rounded-full" })}>
+            <Icon name="upload" />
+            Upload statement
+          </Link>
+          <Link href={`/clients/${client.id}/journals?new=1`} className={buttonClass({ className: "rounded-full" })}>
+            <Icon name="book-open" />
+            Add Journal Entry
+          </Link>
+        </div>
       </header>
 
       {children}

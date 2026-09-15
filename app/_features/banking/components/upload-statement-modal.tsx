@@ -10,12 +10,11 @@
  */
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getImportOutcome, getUploadTargets, uploadStatement } from "@/server/modules/ingest/actions";
 import type { ImportOutcome, UploadTarget } from "@/shared/contracts/transaction";
 import { JobProgress } from "@/features/shell/components/job-progress";
-import { Alert, Button, Modal, ModalFooter, Select, cx, inputClass } from "@/ui/primitives";
+import { Alert, Button, ButtonLink, Modal, ModalFooter, Select, cx, submitWith } from "@/ui/primitives";
 
 type Phase =
   | { step: "form" }
@@ -128,7 +127,7 @@ export function UploadStatementModal({
           ) : null}
         </div>
       ) : (
-        <form action={submit}>
+        <form onSubmit={submitWith(submit)}>
           <div className="flex flex-col gap-5 px-5 py-5">
             {error && !field ? <Alert tone="negative">{error}</Alert> : null}
 
@@ -218,13 +217,9 @@ export function UploadStatementModal({
             Close
           </Button>
           {outcome && outcome.status !== "FAILED" ? (
-            <Link
-              href={`/clients/${clientId}/transactions`}
-              onClick={onClose}
-              className={cx(inputClass, "inline-flex w-auto items-center justify-center border-transparent bg-accent px-4 font-semibold text-white shadow-none hover:bg-accent-ink")}
-            >
+            <ButtonLink href={`/clients/${clientId}/transactions`} onClick={onClose} icon="arrow-right" className="flex-1">
               Review transactions
-            </Link>
+            </ButtonLink>
           ) : null}
         </ModalFooter>
       ) : null}

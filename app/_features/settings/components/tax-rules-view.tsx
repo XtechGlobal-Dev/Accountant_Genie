@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { proposeTaxRule, verifyTaxRule } from "@/server/modules/tax-rules/actions";
 import type { TaxRuleView, TaxRuleVersionView } from "@/shared/contracts/tax-rule";
 import { money, shortDate } from "@/shared/format";
-import { Alert, Badge, Button, Card, CardHeader, Field, Modal, ModalFooter, PageHeader } from "@/ui/primitives";
+import { Alert, Badge, Button, Card, CardHeader, Field, Modal, ModalFooter, PageHeader, submitWith } from "@/ui/primitives";
 
 function valueOf(version: TaxRuleVersionView): string {
   if (version.valueCents !== null) return money(version.valueCents);
@@ -152,7 +152,7 @@ function ProposeModal({ rule, onClose }: { rule: TaxRuleView; onClose: () => voi
 
   return (
     <Modal open onClose={onClose} title={`Propose: ${rule.label}`} description="A new version, pending until a registered tax agent verifies it. Cite the source in the note.">
-      <form action={submit}>
+      <form onSubmit={submitWith(submit)}>
         <div className="flex flex-col gap-4 px-5 py-5">
           {error && !field ? <Alert tone="negative">{error}</Alert> : null}
           <Field

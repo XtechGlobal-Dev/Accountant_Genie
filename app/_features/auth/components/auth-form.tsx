@@ -11,7 +11,7 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import type { AuthFormResult } from "@/server/modules/auth/actions";
-import { Alert, Button } from "@/ui/primitives";
+import { Alert, Button, submitWith } from "@/ui/primitives";
 
 const FIELD_LABELS: Record<string, string> = {
   email: "Email",
@@ -51,7 +51,7 @@ export function AuthForm({
   }
 
   return (
-    <form action={submit} className="flex flex-col gap-4">
+    <form onSubmit={submitWith(submit)} className="flex flex-col gap-4">
       {error ? <Alert tone="negative">{error}</Alert> : null}
       {note ? <Alert tone="info">{note}</Alert> : null}
       {children}

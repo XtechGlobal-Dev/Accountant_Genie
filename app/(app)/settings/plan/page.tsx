@@ -33,8 +33,6 @@ export default async function PlanPage({
         <Alert tone="info">Checkout was cancelled. Nothing changed.</Alert>
       ) : null}
 
-      <PlanPicker state={state} canManage={can(session, "billing:manage")} cardPayments={stripeConfigured()} />
-
       <Card>
         <CardHeader
           title={
@@ -60,6 +58,8 @@ export default async function PlanPage({
           </p>
         </div>
       </Card>
+
+      <PlanPicker state={state} canManage={can(session, "billing:manage")} cardPayments={stripeConfigured()} />
     </div>
   );
 }

@@ -2,6 +2,8 @@ import "server-only";
 
 import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
+import { getStorage } from "@/server/core/storage";
+import { checkLogo, sniffImage } from "./logo";
 import type {
   ClientDetail,
   ClientHeader,
@@ -10,6 +12,7 @@ import type {
   ClientOption,
   ClientRow,
   Partner,
+  TrustDetails,
 } from "@/shared/contracts/client";
 import type { ActionResult } from "@/shared/contracts/result";
 import * as banking from "@/server/modules/banking/repository";
@@ -21,7 +24,9 @@ import type {
   UpdateClientInput,
   ClientNoteInput,
   PartnersInput,
+  TrustDetailsInput,
 } from "./schema";
+import { TRUST_ENTITIES } from "./schema";
 
 /**
  * Client domain operations.
@@ -91,8 +96,8 @@ export async function getClientHeader(
 ): Promise<ClientHeader | null> {
   const row = await repo.findClientHeader(firmId, clientId);
   if (!row) return null;
-  const { archivedAt, ...rest } = row;
-  return { ...rest, archived: archivedAt !== null };
+  const { archivedAt, logoKey, ...rest } = row;
+  return { ...rest, archived: archivedAt !== null, hasLogo: logoKey !== null };
 }
 
 export async function getClientDetail(
@@ -101,8 +106,8 @@ export async function getClientDetail(
 ): Promise<ClientDetail | null> {
   const row = await repo.findClientDetail(firmId, clientId);
   if (!row) return null;
-  const { archivedAt: _archivedAt, ...detail } = row;
-  return detail;
+  const { archivedAt: _archivedAt, logoKey, ...detail } = row;
+  return { ...detail, hasLogo: logoKey !== null };
 }
 
 /**
@@ -148,6 +153,20 @@ export async function getClientOverview(
     })),
     notes: notes satisfies ClientNote[],
   };
+}
+
+/**
+ * Whether any report could show anything: a transaction or a journal exists.
+ * `null` when the firm does not own the client.
+ */
+export async function hasClientLedgerData(firmId: string, clientId: string): Promise<boolean | null> {
+  const client = await repo.findOwnedClientId(firmId, clientId);
+  if (!client) return null;
+  const [counts, journalCount] = await Promise.all([
+    countTransactionsByStatus(firmId, client.id),
+    ledger.countEntries(firmId, client.id),
+  ]);
+  return counts.transactions > 0 || journalCount > 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -270,4 +289,111 @@ export async function savePartners(
   });
 
   return { ok: true, id: client.id };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trust details                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** `null` when the firm does not own the client. */
+export async function getTrustDetails(firmId: string, clientId: string): Promise<TrustDetails | null> {
+  const client = await repo.findOwnedClientId(firmId, clientId);
+  if (!client) return null;
+  return repo.findTrustDetails(firmId, client.id);
+}
+
+/**
+ * Replace a trust's trustee and beneficiaries. Only a unit or discretionary
+ * trust has them; for any other entity the request is refused rather than
+ * stored and ignored, for the same reason partners are.
+ */
+export async function saveTrustDetails(
+  firmId: string,
+  userId: string,
+  clientId: string,
+  input: TrustDetailsInput,
+): Promise<ActionResult> {
+  const client = await repo.findClientHeader(firmId, clientId);
+  if (!client) return { ok: false, error: "Client not found" };
+  if (!TRUST_ENTITIES.has(client.entityType)) {
+    return { ok: false, error: "Only a unit trust or a discretionary trust has a trustee and beneficiaries" };
+  }
+
+  const before = await repo.findTrustDetails(firmId, client.id);
+  const trustee = {
+    kind: input.trustee.kind,
+    name: input.trustee.name,
+    abn: input.trustee.kind === "CORPORATE" ? orNull(input.trustee.abn) : null,
+    signatories: input.trustee.signatories,
+  };
+
+  await db.$transaction(async (tx) => {
+    await repo.replaceTrustDetails(tx, client.id, { trustee, beneficiaries: input.beneficiaries });
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId: client.id,
+      action: "TRUST_DETAILS_UPDATED",
+      entityType: "Client",
+      entityId: client.id,
+      before: {
+        trustee: before.trustee
+          ? { kind: before.trustee.kind, name: before.trustee.name, abn: before.trustee.abn, signatories: before.trustee.signatories }
+          : null,
+        beneficiaries: before.beneficiaries.map((b) => ({ name: b.name, kind: b.kind })),
+      },
+      after: { trustee, beneficiaries: input.beneficiaries.map((b) => ({ name: b.name, kind: b.kind })) },
+    });
+  });
+
+  return { ok: true, id: client.id };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Notes and logo                                                             */
+/* -------------------------------------------------------------------------- */
+
+/** `null` when the firm does not own the client. */
+export async function getClientNotes(firmId: string, clientId: string): Promise<ClientNote[] | null> {
+  const client = await repo.findOwnedClientId(firmId, clientId);
+  if (!client) return null;
+  return repo.listClientNotes(firmId, client.id);
+}
+
+/**
+ * Store a logo. The bytes decide whether it is an image; the key carries the
+ * firm and the client, and changes on every upload so a stale copy is never
+ * served under a new one. The previous object is left in place: storage is
+ * append-only here, like everything else that was once shown to a user.
+ */
+export async function setClientLogo(firmId: string, clientId: string, bytes: Uint8Array): Promise<ActionResult> {
+  const client = await repo.findOwnedClientId(firmId, clientId);
+  if (!client) return { ok: false, error: "Client not found" };
+
+  const checked = checkLogo(bytes);
+  if (!checked.ok) return { ok: false, error: checked.error, field: "logo" };
+
+  const key = `${firmId}/clients/${client.id}/logo-${Date.now()}.${checked.kind.ext}`;
+  await getStorage().put(key, Buffer.from(bytes), checked.kind.contentType);
+  await repo.updateOwnedClient(firmId, client.id, { logoKey: key });
+  return { ok: true, id: client.id };
+}
+
+/** `false` when the firm does not own the client. */
+export async function removeClientLogo(firmId: string, clientId: string): Promise<boolean> {
+  const count = await repo.updateOwnedClient(firmId, clientId, { logoKey: null });
+  return count > 0;
+}
+
+/** The stored logo, or `null` when there is none — or the client is not this firm's. */
+export async function getClientLogo(
+  firmId: string,
+  clientId: string,
+): Promise<{ bytes: Buffer; contentType: string } | null> {
+  const row = await repo.findClientLogoKey(firmId, clientId);
+  if (!row?.logoKey) return null;
+  const bytes = await getStorage().get(row.logoKey);
+  const kind = sniffImage(bytes);
+  if (!kind) return null;
+  return { bytes, contentType: kind.contentType };
 }

@@ -11,7 +11,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateFirm, updateProfile } from "@/server/modules/firms/actions";
-import { Alert, Button, Field, Modal, ModalFooter } from "@/ui/primitives";
+import { Alert, Button, Field, Modal, ModalFooter, submitWith } from "@/ui/primitives";
 import type { SettingsView } from "@/shared/contracts/settings";
 
 function useAction(action: (form: FormData) => Promise<{ ok: boolean; error?: string; field?: string }>, onDone: () => void) {
@@ -54,7 +54,7 @@ export function EditProfileButton({ user }: { user: SettingsView["user"] }) {
         title="Edit profile"
         description="How your name appears on journals you post and in the audit trail."
       >
-        <form action={form.submit}>
+        <form onSubmit={submitWith(form.submit)}>
           <div className="flex flex-col gap-5 px-5 py-5">
             {form.error && !form.field ? <Alert tone="negative">{form.error}</Alert> : null}
             <Field
@@ -104,7 +104,7 @@ export function EditFirmButton({ firm }: { firm: SettingsView["firm"] }) {
         title="Edit firm"
         description="The practice these books belong to."
       >
-        <form action={form.submit}>
+        <form onSubmit={submitWith(form.submit)}>
           <div className="flex flex-col gap-5 px-5 py-5">
             {form.error && !form.field ? <Alert tone="negative">{form.error}</Alert> : null}
             <Field

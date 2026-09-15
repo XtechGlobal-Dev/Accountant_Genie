@@ -12,11 +12,13 @@ import { createLoan, setLoanStatus, updateLoan } from "@/server/modules/loans/ac
 import type { AccountOption } from "@/shared/contracts/account";
 import type { LoanRow } from "@/shared/contracts/register";
 import { shortDate } from "@/shared/format";
+import { LOAN_TYPE_LABELS } from "@/shared/labels";
 import { basisPointsToInput, centsToInput, formatBasisPoints } from "@/shared/money";
 import {
   Alert,
   Badge,
   Button,
+  ButtonLink,
   EmptyState,
   Field,
   Modal,
@@ -24,6 +26,7 @@ import {
   Money,
   PageHeader,
   Select,
+  submitWith,
 } from "@/ui/primitives";
 
 const FREQUENCY: Record<LoanRow["frequency"], string> = { WEEKLY: "Weekly", FORTNIGHTLY: "Fortnightly", MONTHLY: "Monthly" };
@@ -73,6 +76,7 @@ export function LoansView({ clientId, rows, accounts }: { clientId: string; rows
             <thead>
               <tr>
                 <th>Lender</th>
+                <th className="w-44">Type</th>
                 <th className="w-32 text-right">Principal</th>
                 <th className="w-24 text-right">Rate</th>
                 <th className="w-28">Started</th>
@@ -93,6 +97,9 @@ export function LoansView({ clientId, rows, accounts }: { clientId: string; rows
                     </Link>
                     {row.description ? <span className="block text-xs text-ink-3">{row.description}</span> : null}
                   </td>
+                  <td>
+                    <Badge tone="outline">{LOAN_TYPE_LABELS[row.type]}</Badge>
+                  </td>
                   <td className="text-right">
                     <Money cents={row.principalCents} />
                   </td>
@@ -106,14 +113,14 @@ export function LoansView({ clientId, rows, accounts }: { clientId: string; rows
                     <Badge tone={row.status === "ACTIVE" ? "positive" : "neutral"}>{row.status === "ACTIVE" ? "Active" : "Closed"}</Badge>
                   </td>
                   <td className="text-right">
-                    <span className="inline-flex items-center gap-1">
-                      <Link href={`/clients/${clientId}/loans/${row.id}`} className="text-xs font-medium text-accent hover:underline">
+                    <span className="inline-flex items-center gap-2">
+                      <ButtonLink href={`/clients/${clientId}/loans/${row.id}`} variant="soft" size="sm" icon="calendar">
                         Schedule
-                      </Link>
-                      <Button variant="ghost" size="sm" onClick={() => setEditing({ mode: "edit", row })}>
+                      </ButtonLink>
+                      <Button variant="secondary" size="sm" icon="pen" onClick={() => setEditing({ mode: "edit", row })}>
                         Edit
                       </Button>
-                      <Button variant="ghost" size="sm" disabled={busy === row.id} onClick={() => toggle(row)}>
+                      <Button variant="secondary" size="sm" icon={row.status === "ACTIVE" ? "archive" : "undo"} disabled={busy === row.id} onClick={() => toggle(row)}>
                         {row.status === "ACTIVE" ? "Close" : "Reopen"}
                       </Button>
                     </span>
@@ -161,24 +168,46 @@ function LoanModal({ clientId, row, accounts, onClose }: { clientId: string; row
   const errorFor = (name: string) => (field === name ? (error ?? undefined) : undefined);
 
   return (
-    <Modal open onClose={onClose} title={row ? "Edit loan" : "New loan"} description="The terms as they appear on the loan contract." size="lg">
-      <form action={submit}>
-        <div className="flex flex-col gap-4 px-5 py-5">
+    <Modal
+      open
+      onClose={onClose}
+      icon="banknote"
+      title={row ? "Edit loan" : "Add loan"}
+      description="The terms as they appear on the loan contract. Repayments split principal from interest on the schedule."
+      size="lg"
+    >
+      <form onSubmit={submitWith(submit)}>
+        <div className="flex flex-col gap-5 px-5 py-5 sm:px-6">
           {error && !field ? <Alert tone="negative">{error}</Alert> : null}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Lender" name="lender" required defaultValue={row?.lender ?? ""} placeholder="e.g. Westpac equipment finance" error={errorFor("lender")} />
-            <Field label="Description" name="description" defaultValue={row?.description ?? ""} placeholder="What the loan is for" error={errorFor("description")} />
-            <Field label="Amount borrowed" name="principal" required inputMode="decimal" defaultValue={row ? centsToInput(row.principalCents) : ""} placeholder="0.00" error={errorFor("principalCents")} />
-            <Field label="Interest rate (% p.a.)" name="interestRate" required inputMode="decimal" defaultValue={row ? basisPointsToInput(row.interestRateBasisPoints) : ""} placeholder="e.g. 7.25" error={errorFor("interestRateBasisPoints")} />
-            <Field label="Start date" name="startDate" required type="date" defaultValue={row ? row.startDate.toISOString().slice(0, 10) : ""} error={errorFor("startDate")} />
-            <Field label="Term (months)" name="termMonths" required type="number" inputMode="numeric" defaultValue={row ? String(row.termMonths) : ""} placeholder="e.g. 60" error={errorFor("termMonths")} />
-            <Field label="Repayment" name="repayment" required inputMode="decimal" defaultValue={row ? centsToInput(row.repaymentCents) : ""} placeholder="0.00" error={errorFor("repaymentCents")} />
-            <Select label="Repayment frequency" name="frequency" defaultValue={row?.frequency ?? "MONTHLY"}>
-              <option value="MONTHLY">Monthly</option>
-              <option value="FORTNIGHTLY">Fortnightly</option>
-              <option value="WEEKLY">Weekly</option>
+
+          <section className="flex flex-col gap-4 rounded-2xl border border-rule bg-surface p-5 shadow-xs">
+            <Select label="Loan type" name="type" required icon="layers" defaultValue={row?.type ?? ""} error={errorFor("type")}>
+              <option value="" disabled>
+                Select loan type
+              </option>
+              {(Object.entries(LOAN_TYPE_LABELS) as [keyof typeof LOAN_TYPE_LABELS, string][]).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
             </Select>
-            <Select label="Liability account" name="accountId" defaultValue={row?.accountId ?? ""} error={errorFor("accountId")} className="sm:col-span-2">
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Lender" name="lender" required icon="landmark" defaultValue={row?.lender ?? ""} placeholder="e.g. Westpac equipment finance" error={errorFor("lender")} />
+              <Field label="Description" name="description" defaultValue={row?.description ?? ""} placeholder="What the loan is for" error={errorFor("description")} />
+              <Field label="Amount borrowed" name="principal" required inputMode="decimal" prefix="$" defaultValue={row ? centsToInput(row.principalCents) : ""} placeholder="0.00" error={errorFor("principalCents")} />
+              <Field label="Interest rate (p.a.)" name="interestRate" required inputMode="decimal" suffix="%" defaultValue={row ? basisPointsToInput(row.interestRateBasisPoints) : ""} placeholder="e.g. 7.25" error={errorFor("interestRateBasisPoints")} />
+              <Field label="Start date" name="startDate" required type="date" icon="calendar" defaultValue={row ? row.startDate.toISOString().slice(0, 10) : ""} error={errorFor("startDate")} />
+              <Field label="Term (months)" name="termMonths" required type="number" inputMode="numeric" defaultValue={row ? String(row.termMonths) : ""} placeholder="e.g. 60" error={errorFor("termMonths")} />
+              <Field label="Repayment" name="repayment" required inputMode="decimal" prefix="$" defaultValue={row ? centsToInput(row.repaymentCents) : ""} placeholder="0.00" error={errorFor("repaymentCents")} />
+              <Select label="Repayment frequency" name="frequency" icon="calendar-days" defaultValue={row?.frequency ?? "MONTHLY"}>
+                <option value="MONTHLY">Monthly</option>
+                <option value="FORTNIGHTLY">Fortnightly</option>
+                <option value="WEEKLY">Weekly</option>
+              </Select>
+            </div>
+
+            <Select label="Liability account" name="accountId" icon="book-open" defaultValue={row?.accountId ?? ""} error={errorFor("accountId")}>
               <option value="">Not linked</option>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -186,14 +215,14 @@ function LoanModal({ clientId, row, accounts, onClose }: { clientId: string; row
                 </option>
               ))}
             </Select>
-          </div>
+          </section>
         </div>
         <ModalFooter>
           <Button variant="secondary" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
-          <Button type="submit" disabled={pending}>
-            {pending ? "Saving…" : row ? "Save changes" : "Add loan"}
+          <Button type="submit" icon="save" disabled={pending}>
+            {pending ? "Saving…" : row ? "Save changes" : "Save"}
           </Button>
         </ModalFooter>
       </form>

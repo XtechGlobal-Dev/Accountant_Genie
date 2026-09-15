@@ -16,9 +16,38 @@ const money = z
     return cents;
   });
 
+/** Blank is absence; anything typed must be a non-negative amount. */
+const optionalMoney = z
+  .string()
+  .trim()
+  .transform((v, ctx) => {
+    if (v === "") return null;
+    const cents = parseCents(v);
+    if (cents === null || cents < 0) {
+      ctx.addIssue({ code: "custom", message: "Enter an amount in dollars and cents, or leave blank" });
+      return z.NEVER;
+    }
+    return cents;
+  });
+
+export const AssetCategoryEnum = z.enum([
+  "COMPUTER_EQUIPMENT",
+  "FURNITURE_FIXTURES",
+  "OFFICE_EQUIPMENT",
+  "TOOLS_EQUIPMENT",
+  "MOTOR_VEHICLES",
+  "PLANT_EQUIPMENT",
+  "OTHER",
+]);
+
 export const AssetSchema = z.object({
   name: z.string().trim().min(1, "The asset needs a name").max(200),
   description: z.string().trim().max(300).optional(),
+  category: AssetCategoryEnum,
+  /** What was paid, GST included. Optional: the schedule never reads it. */
+  totalCostCents: optionalMoney,
+  gstCents: optionalMoney,
+  /** The depreciable cost. */
   costCents: money,
   purchaseDate: CalendarDateSchema,
   method: z.enum(["PRIME_COST", "DIMINISHING_VALUE"]),
@@ -53,7 +82,15 @@ export const AssetSchema = z.object({
     }),
   accountId: z.string().trim().max(64).optional(),
   isCar: z.boolean(),
-});
+})
+  .refine((v) => v.gstCents === null || v.totalCostCents === null || v.gstCents <= v.totalCostCents, {
+    path: ["gstCents"],
+    message: "GST cannot exceed the total cost",
+  })
+  .refine((v) => v.totalCostCents === null || v.costCents <= v.totalCostCents, {
+    path: ["costCents"],
+    message: "The acquisition cost cannot exceed the total cost",
+  });
 
 export const DisposeAssetSchema = z.object({
   disposedAt: CalendarDateSchema,
@@ -80,6 +117,9 @@ export function assetFromForm(form: FormData) {
   return AssetSchema.safeParse({
     name: form.get("name"),
     description: text(form, "description"),
+    category: form.get("category"),
+    totalCostCents: text(form, "totalCost"),
+    gstCents: text(form, "gst"),
     costCents: text(form, "cost"),
     purchaseDate: text(form, "purchaseDate"),
     method: form.get("method"),

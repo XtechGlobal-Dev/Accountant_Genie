@@ -11,7 +11,7 @@ import { changeRole, inviteUser } from "@/server/modules/auth/actions";
 import type { TeamMember } from "@/shared/contracts/settings";
 import type { UserRole } from "@/shared/enums";
 import { shortDate } from "@/shared/format";
-import { Alert, Avatar, Badge, Button, Field, Modal, ModalFooter, PageHeader, Select, cx, inputClass } from "@/ui/primitives";
+import { Alert, Avatar, Badge, Button, Field, Modal, ModalFooter, PageHeader, Select, cx, inputClass, submitWith } from "@/ui/primitives";
 
 const ROLE_LABELS: Record<UserRole, string> = {
   OWNER: "Owner",
@@ -182,7 +182,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
           </ModalFooter>
         </>
       ) : (
-        <form action={submit}>
+        <form onSubmit={submitWith(submit)}>
           <div className="flex flex-col gap-4 px-5 py-5">
             {error && !field ? <Alert tone="negative">{error}</Alert> : null}
             <Field label="Name" name="name" required error={errorFor("name")} />

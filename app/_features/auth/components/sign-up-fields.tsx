@@ -18,7 +18,7 @@
 import { useRef, useState, useTransition } from "react";
 import { signUp, type AuthFormResult } from "@/server/modules/auth/actions";
 import { Icon } from "@/ui/icons";
-import { Alert, Button, Field, PasswordField, Select, cx } from "@/ui/primitives";
+import { Alert, Button, Field, PasswordField, Select, cx, submitWith } from "@/ui/primitives";
 
 const STATES = [
   ["NSW", "New South Wales"],
@@ -159,7 +159,7 @@ export function SignUpForm() {
   return (
     <form
       ref={formRef}
-      action={submit}
+      onSubmit={submitWith(submit)}
       className="flex flex-col gap-5"
       onKeyDown={(event) => {
         // Enter on an earlier step advances rather than submitting the lot.

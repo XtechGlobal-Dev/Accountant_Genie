@@ -24,7 +24,7 @@ export function SettingsNav() {
   const onPlan = pathname === "/settings/plan";
 
   return (
-    <nav aria-label="Settings" className="card flex flex-col p-3 lg:w-72 lg:shrink-0">
+    <nav aria-label="Settings" className="card flex flex-col p-3 lg:sticky lg:top-4 lg:h-[calc(100svh-1.75rem)] lg:w-72 lg:shrink-0 lg:overflow-y-auto">
       <div className="px-2 pb-3 pt-1">
         <h1 className="display text-[1.125rem]">Account Settings</h1>
         <p className="mt-1 text-[13px] text-ink-2">Manage your account and preferences</p>
@@ -52,8 +52,10 @@ export function SettingsNav() {
         })}
       </ul>
 
+      {/* The foot: the plans nudge (except on the plans page) and the way back, pinned to the bottom. */}
+      <div className="mt-auto flex flex-col gap-3 pt-3">
       {onPlan ? null : (
-        <div className="mt-auto rounded-2xl bg-accent-soft/60 p-3.5 pt-3.5 max-lg:mt-3">
+        <div className="rounded-2xl bg-accent-soft/60 p-3.5 pt-3.5">
           <p className="flex items-center gap-2 text-[14px] font-bold text-ink">
             <Icon name="crown" className="size-[18px] text-warning" />
             Upgrade to Pro
@@ -69,10 +71,11 @@ export function SettingsNav() {
         </div>
       )}
 
-      <Link href="/" className={buttonClass({ variant: "secondary", className: "mt-3 w-full" })}>
+      <Link href="/" className={buttonClass({ variant: "secondary", className: "w-full" })}>
         <Icon name="arrow-left" />
         Back to Accountant Genie
       </Link>
+      </div>
     </nav>
   );
 }

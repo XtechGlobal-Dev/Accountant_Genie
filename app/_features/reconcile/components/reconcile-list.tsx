@@ -12,7 +12,7 @@ import { queueReconciliation } from "@/server/modules/ingest/actions";
 import { openActivityPanel } from "@/features/shell/components/activity-panel";
 import type { ClientQueueRow } from "@/shared/contracts/dashboard";
 import { Icon } from "@/ui/icons";
-import { Alert, Avatar, Badge, Button, Card, CardHeader, cx } from "@/ui/primitives";
+import { Alert, Avatar, Badge, Button, Card, CardHeader, buttonClass, cx } from "@/ui/primitives";
 
 export function ReconcileList({ rows }: { rows: ClientQueueRow[] }) {
   const router = useRouter();
@@ -108,7 +108,7 @@ export function ReconcileList({ rows }: { rows: ClientQueueRow[] }) {
               <td className="text-right">
                 <span className="inline-flex items-center gap-1.5">
                   {row.awaitingReview > 0 ? (
-                    <Link href={`/clients/${row.clientId}/transactions`} className="inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-[13px] font-semibold text-ink-2 hover:bg-sunken hover:text-ink">
+                    <Link href={`/clients/${row.clientId}/transactions`} className={buttonClass({ variant: row.notCoded > 0 ? "secondary" : "soft", size: "sm" })}>
                       Review
                       <Icon name="arrow-right" className="size-3.5" />
                     </Link>

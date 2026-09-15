@@ -35,7 +35,7 @@ function tone(status: JobView["status"]): "positive" | "warning" | "negative" | 
   return "warning";
 }
 
-export function ActivityPanel() {
+export function ActivityPanel({ attention = 0 }: { attention?: number | undefined }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<JobView[] | null>(null);
   const [query, setQuery] = useState("");
@@ -124,6 +124,25 @@ export function ActivityPanel() {
             />
           </div>
         </div>
+
+        {attention > 0 ? (
+          <Link
+            href="/reconcile"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-3 border-b border-warning/30 bg-warning-soft px-4 py-3 text-[13px] transition-colors hover:bg-warning-soft/70"
+          >
+            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-surface text-warning-ink ring-1 ring-warning/30">
+              <Icon name="sparkles" className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-semibold text-warning-ink">
+                <span className="figure">{attention}</span> transaction{attention === 1 ? "" : "s"} awaiting review
+              </span>
+              <span className="block text-xs text-ink-2">Coded and ready for an accountant to accept or recode</span>
+            </span>
+            <Icon name="chevron-right" className="size-4 shrink-0 text-warning-ink" />
+          </Link>
+        ) : null}
 
         <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto">
           {items === null ? (

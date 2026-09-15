@@ -11,7 +11,7 @@ import { usePathname } from "next/navigation";
 import { sendSupportRequest } from "@/server/modules/support/actions";
 import { SUPPORT_CATEGORIES, SUPPORT_CATEGORY_LABELS, type SupportCategory } from "@/server/modules/support/schema";
 import { Icon } from "@/ui/icons";
-import { Alert, Button, Field, Select, cx } from "@/ui/primitives";
+import { Alert, Button, Field, Select, cx, submitWith } from "@/ui/primitives";
 
 const OPEN_EVENT = "ledgerly:open-support";
 
@@ -109,7 +109,7 @@ export function SupportWidget() {
               </Button>
             </div>
           ) : (
-            <form action={submit} className="flex flex-col gap-3 px-5 py-4">
+            <form onSubmit={submitWith(submit)} className="flex flex-col gap-3 px-5 py-4">
               {error && !field ? <Alert tone="negative">{error}</Alert> : null}
               <Select label="What is this about?" name="category" value={category} onChange={(event) => setCategory(event.target.value as SupportCategory)}>
                 {SUPPORT_CATEGORIES.map((value) => (

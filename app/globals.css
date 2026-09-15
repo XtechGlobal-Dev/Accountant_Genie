@@ -188,6 +188,64 @@
     background: color-mix(in oklab, var(--color-accent-soft) 55%, transparent);
   }
 
+  /* The review sheet: two-line rows, so each cell gets more air than the
+     default register and the eye can rest between transactions. */
+  .sheet table.review thead th {
+    padding: 0.85rem 1.25rem;
+  }
+  .sheet table.review tbody td {
+    padding: 1.1rem 1.25rem;
+  }
+  .sheet table.review tbody td:first-child {
+    padding-right: 0.5rem;
+  }
+
+  /* The chart of accounts: a register of separated rows. Each row is its own
+     card so the eye can run down the code column; the column headings and
+     the section rows sit on the ground, not in a card. */
+  table.coa {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 0.5rem;
+    margin-top: -0.5rem;
+  }
+  table.coa thead th {
+    padding: 0.25rem 1.25rem 0.5rem;
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    white-space: nowrap;
+  }
+  table.coa tbody th.group-row {
+    padding: 0.85rem 1.25rem 0.25rem;
+    text-align: left;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--color-ink);
+  }
+  table.coa tbody td {
+    padding: 0.85rem 1.25rem;
+    vertical-align: middle;
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-rule);
+    border-bottom: 1px solid var(--color-rule);
+    box-shadow: var(--shadow-xs);
+  }
+  table.coa tbody td:first-child {
+    border-left: 1px solid var(--color-rule);
+    border-radius: var(--radius-control) 0 0 var(--radius-control);
+  }
+  table.coa tbody td:last-child {
+    border-right: 1px solid var(--color-rule);
+    border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  }
+  table.coa tbody tr:hover td {
+    border-color: color-mix(in oklab, var(--color-accent) 40%, var(--color-rule));
+  }
+
   .sheet tbody th.group-row,
   .card tbody th.group-row {
     background: var(--color-surface-2);
@@ -439,6 +497,7 @@
 
   .card,
   .sheet {
+    background-image: none !important;
     box-shadow: none !important;
     break-inside: avoid;
   }
@@ -460,12 +519,12 @@
 }
 
 /* The hero band keeps dark type on a pale field in light mode; in dark mode it
-   becomes a deep navy field so the same ink tokens stay readable. */
+   becomes a near-black field so the same ink tokens stay readable. */
 :root[data-theme="dark"] .bg-hero-light {
   background-image:
     radial-gradient(60% 100% at 100% 0%, rgba(59, 130, 246, 0.35), transparent 60%),
     radial-gradient(40% 80% at 70% 100%, rgba(37, 99, 235, 0.25), transparent 60%),
-    linear-gradient(135deg, #111c3f 0%, #0f1a38 55%, #0c1530 100%);
+    linear-gradient(135deg, #1a1a1f 0%, #151518 55%, #0f0f12 100%);
 }
 :root[data-theme="dark"] .hero-art {
   opacity: 0.9;
@@ -477,18 +536,18 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-ground: #0a0f1f;
-  --color-surface: #111a30;
-  --color-surface-2: #16203a;
-  --color-sunken: #1c2742;
+  --color-ground: #09090b;
+  --color-surface: #121214;
+  --color-surface-2: #18181b;
+  --color-sunken: #202024;
 
-  --color-ink: #eceefc;
-  --color-ink-2: #aab0d6;
-  --color-ink-3: #737aa8;
+  --color-ink: #f2f2f5;
+  --color-ink-2: #a8a9b4;
+  --color-ink-3: #74757f;
 
-  --color-rule: #262c55;
-  --color-rule-soft: #20264a;
-  --color-rule-strong: #363d6e;
+  --color-rule: #27272b;
+  --color-rule-soft: #1f1f23;
+  --color-rule-strong: #3a3a40;
 
   --color-accent: #60a5fa;
   --color-accent-2: #93c5fd;
@@ -505,12 +564,29 @@
   --color-negative-ink: #fda4af;
   --color-warning-ink: #fcd34d;
 
-  --color-sidebar: #090c1f;
-  --color-sidebar-2: #12163a;
+  --color-sidebar: #0c0c0e;
+  --color-sidebar-2: #161618;
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -16px rgba(0, 0, 0, 0.7);
   --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.35), 0 22px 48px -16px rgba(96, 165, 250, 0.35);
   --shadow-pop: 0 8px 20px -8px rgba(0, 0, 0, 0.5), 0 32px 80px -24px rgba(0, 0, 0, 0.85);
   --shadow-glow: 0 12px 28px -10px rgba(96, 165, 250, 0.6);
+}
+
+/* Black fade. The ground is not a flat colour but a deep vertical fade,
+   black at the foot with a faint charcoal lift at the head, fixed to the
+   viewport so it does not scroll with the page. Cards carry a whisper of the
+   same fade so they read as raised on it rather than flat panels. */
+:root[data-theme="dark"] html,
+:root[data-theme="dark"] .bg-ground {
+  background-color: #050506;
+  background-image:
+    radial-gradient(80% 50% at 50% -10%, rgba(255, 255, 255, 0.05), transparent 70%),
+    linear-gradient(180deg, #141417 0%, #0a0a0c 45%, #050506 100%);
+  background-attachment: fixed;
+}
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .sheet {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, 0.22) 100%);
 }

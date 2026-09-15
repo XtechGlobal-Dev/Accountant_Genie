@@ -17,7 +17,10 @@ const money = (label: string) =>
       return cents;
     });
 
+export const LoanTypeEnum = z.enum(["EQUIPMENT_FINANCE", "EQUIPMENT_FINANCE_LONG_TERM", "BANK_LOAN_LONG_TERM", "BANK_LOAN"]);
+
 export const LoanSchema = z.object({
+  type: LoanTypeEnum,
   lender: z.string().trim().min(1, "Who is the loan from?").max(200),
   description: z.string().trim().max(300).optional(),
   principalCents: money("amount borrowed"),
@@ -45,6 +48,7 @@ const text = (form: FormData, key: string) => String(form.get(key) ?? "");
 
 export function loanFromForm(form: FormData) {
   return LoanSchema.safeParse({
+    type: form.get("type"),
     lender: form.get("lender"),
     description: text(form, "description"),
     principalCents: text(form, "principal"),

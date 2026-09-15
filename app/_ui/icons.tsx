@@ -10,6 +10,7 @@
 
 import Image from "next/image";
 import logoMark from "@/public/images/logo-mark.png";
+import logoMarkDark from "@/public/images/logo-mark-dark.png";
 import logoFull from "@/public/images/logo-full.png";
 import logoFullDark from "@/public/images/logo-full-dark.png";
 import { cx } from "./styles";
@@ -29,6 +30,7 @@ import {
   Bot,
   Briefcase,
   Building2,
+  User,
   Calendar,
   CalendarDays,
   Check,
@@ -40,6 +42,7 @@ import {
   ClipboardList,
   Clock,
   Coins,
+  Copy,
   Command,
   CreditCard,
   Crown,
@@ -53,6 +56,7 @@ import {
   Filter,
   Gem,
   HardHat,
+  Hash,
   Headset,
   HelpCircle,
   House,
@@ -60,6 +64,8 @@ import {
   Info,
   KeyRound,
   Landmark,
+  Link2,
+  Phone,
   Layers,
   LayoutDashboard,
   ListChecks,
@@ -80,6 +86,7 @@ import {
   Receipt,
   RefreshCw,
   Scale,
+  Save,
   Search,
   Send,
   Settings2,
@@ -125,7 +132,13 @@ const ICONS = {
   building: Building2,
   briefcase: Briefcase,
   table: Table,
+  hash: Hash,
+  save: Save,
   landmark: Landmark,
+  link: Link2,
+  copy: Copy,
+  user: User,
+  phone: Phone,
   pen: PenLine,
   "trending-down": TrendingDown,
   banknote: Banknote,
@@ -213,20 +226,28 @@ export function Icon({
  * The brand: the genie mark on its own, and the full lockup with the wordmark.
  *
  * Both come from the supplied logo (`public/images/logo.svg`, a PNG lockup):
- * `logo-mark.png` is the "g" and its sparkles, `logo-full.png` the whole
- * thing, both on transparency. The wordmark is navy and the face is a
- * cut-out, so `logo-full-dark.png` (same lockup, wordmark in light ink, face
- * filled) is the dark-theme copy and `BrandLogo` swaps between them. On
- * dark chrome use `BrandMark tone="inverse"`, which puts the mark on a white
- * tile. `app/icon.png` (the favicon) is the same mark.
+ * `logo-mark.png` is the "g" and both sparkles cut cleanly from
+ * `logo-full.png`, on transparency. The face is a cut-out, so in the dark
+ * theme it would show the ground through it; `logo-mark-dark.png` (the same
+ * cut from `logo-full-dark.png`, face filled) swaps in there, exactly as
+ * `BrandLogo` swaps `logo-full-dark.png` for the navy wordmark. On dark chrome
+ * that has no theme (the sign-in art, printed pages) use `tone="inverse"`,
+ * which puts the light mark on a white tile. `app/icon.png` (the favicon) is
+ * the same mark.
  */
 export function BrandMark({ className = "size-8", tone = "ink" }: { className?: string; tone?: "ink" | "inverse" }) {
-  const image = <Image src={logoMark} alt="Accountant Genie" className={cx("object-contain", tone === "inverse" ? "size-full" : cx("shrink-0", className))} priority />;
-  // On dark chrome the blue mark sinks into the ground, so it sits on a white tile.
-  return tone === "inverse" ? (
-    <span className={cx("inline-flex shrink-0 items-center justify-center rounded-[26%] bg-white p-1 shadow-xs", className)}>{image}</span>
-  ) : (
-    image
+  if (tone === "inverse") {
+    return (
+      <span className={cx("inline-flex shrink-0 items-center justify-center rounded-[26%] bg-white p-1 shadow-xs", className)}>
+        <Image src={logoMark} alt="Accountant Genie" className="size-full object-contain" priority />
+      </span>
+    );
+  }
+  return (
+    <span className={cx("inline-flex shrink-0 items-center justify-center", className)}>
+      <Image src={logoMark} alt="Accountant Genie" className="size-full object-contain dark:hidden" priority />
+      <Image src={logoMarkDark} alt="Accountant Genie" className="hidden size-full object-contain dark:block" priority />
+    </span>
   );
 }
 
