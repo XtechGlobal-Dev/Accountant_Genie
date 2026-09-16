@@ -221,11 +221,11 @@ export async function reviewedCodings(firmId: string, clientId: string): Promise
   return map;
 }
 
-/** The system ledger account a bank account posts against (Cash at Bank, Credit Card). */
+/** A system ledger account by code: the bank side of a posting, or the interest account a loan split needs. */
 export function findSystemAccountByCode(code: number) {
   return db.account.findFirst({
     where: { code, firmId: null, clientId: null },
-    select: { id: true },
+    select: { id: true, gstTreatment: true },
   });
 }
 

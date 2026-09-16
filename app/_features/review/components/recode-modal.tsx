@@ -166,7 +166,7 @@ export function RecodeModal({
           </Select>
         ) : null}
 
-        {loans.length > 0 && account?.type === "LIABILITY" ? (
+        {loans.length > 0 && account ? (
           <Select
             label="Loan facility"
             name="loanId"

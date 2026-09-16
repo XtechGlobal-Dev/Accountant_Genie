@@ -55,22 +55,22 @@ export const TAX_RULES: readonly TaxRuleDefinition[] = [
     description:
       "Account codes whose postings make up W1 (total salary, wages and other payments). Comma-separated account codes.",
     kind: "TEXT",
-    proposedText: "325,477",
+    proposedText: "600",
   },
   {
     code: "BAS_W2_ACCOUNT",
     label: "BAS W2 — PAYG withholding account",
     description: "The liability account whose credits make up W2 (amounts withheld). One account code.",
     kind: "TEXT",
-    proposedText: "825",
+    proposedText: "630",
   },
   {
     code: "TPAR_ACCOUNTS",
     label: "TPAR — subcontractor payment accounts",
     description:
-      "Account codes whose payments are reportable on the Taxable Payments Annual Report. Comma-separated account codes. Until verified the report uses the chart's Subcontractor Payments account and shows a badge.",
+      "Account codes whose payments are reportable on the Taxable Payments Annual Report. Comma-separated account codes. Until verified the report uses the chart's Subcontractor Payments account (530) and shows a badge.",
     kind: "TEXT",
-    proposedText: "320",
+    proposedText: "530",
   },
   {
     code: "INPUT_TAXED_BAS_LABELS",

@@ -349,8 +349,8 @@ comment/doc mein likha hai; "Open" matlab abhi baaki.
 | A4 | Depreciation rates hardcoded | Fixed (gated) | `DEPRECIATION_METHODS` parsed and applied; statutory fallback flagged on the report |
 | A5 | GST rate unversioned | Documented | `GST_RATE_PERCENT` catalogue entry; arithmetic stays one constant; stamped on every entry |
 | A6 | TPAR accounts hardcoded | Fixed | `TPAR_ACCOUNTS` rule + badge |
-| A7 | 290 Refunds on the wrong side | Fixed | INCOME / `GST_ON_INCOME`; migration 9 |
-| A8-10 | Unflagged treatments | Fixed | 203, 493, 510 flagged with notes; migration 9 |
+| A7 | 290 Refunds on the wrong side | Flagged | The practice supplied 290 as an expense (chart of 16 Sep 2026); it is kept as given and flagged REQUIRES_VERIFICATION with the customer-refund note, so the advisor decides. Migration 9 predates the chart replacement; `db:sync-accounts` applies the chart over it |
+| A8-10 | Unflagged treatments | Fixed | On the replaced chart: 203 Rebates, 332 Workcover, 290 Refunds flagged with notes (493/510 no longer exist) |
 | AI1 | `identifySubcontractors` missing | Fixed | All three providers; `proposeSubcontractorLinks`; confirm through recode; UI on the register page |
 | AI2 | No CI | Fixed | `.github/workflows/ci.yml`: typecheck, unit, migrations from scratch, IDOR, DB, golden |
 | AI3 | OpenAI refusal by regex | Fixed | Typed refusal content part |
@@ -363,7 +363,7 @@ comment/doc mein likha hai; "Open" matlab abhi baaki.
 | R3 | Historical inconsistency | Fixed | `reviewedCodings()`; `inconsistent` risk factor |
 | R4 | Merchant signal unused | Partial | ISO 18245 merchant code sent to the model; no canonical merchant entity |
 | R5 | Novelty divisor literal | Fixed | `RECONCILE_NOVELTY_RISK_CENTS` |
-| R7 / R8 | Skill stale (877, 999) | Fixed | Skill text corrected |
+| R7 / R8 | Skill stale (877, 999) | Fixed | Skill now names the `CODE_*` constants, not numbers — the chart was replaced on 16 Sep 2026 and every code moved |
 | R9 | Pre-AI ratio unmeasured | Fixed | `preAiRatio` + warning below `RECONCILE_PRE_AI_TARGET` |
 | R-LOW | evidenceCount unused; floor undocumented; stale memory silent | Fixed | Scoring tiebreak; config comment; run warning |
 | R11 | Split transactions (phase plan) | Open | Only the loan split exists |

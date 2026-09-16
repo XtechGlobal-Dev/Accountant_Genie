@@ -2,6 +2,7 @@ import "server-only";
 
 import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
+import { CODE_CASH_AT_BANK, CODE_CREDIT_CARD } from "@/server/au/coa";
 import { gstFromGross } from "@/server/au/gst";
 import { CODE_INTEREST_CHARGED, CODE_LOAN_PRINCIPAL } from "@/server/au/coa";
 import { enqueue } from "@/server/jobs/queue";
@@ -13,7 +14,7 @@ import { loanSchedule } from "@/server/modules/loans/amortisation";
 import * as loansRepo from "@/server/modules/loans/repository";
 import * as subcontractors from "@/server/modules/subcontractors/repository";
 import { treatmentAllowedFor } from "@/shared/account-rules";
-import type { AccountType } from "@/shared/enums";
+import type { AccountType, GstTreatment } from "@/shared/enums";
 import type { ActionResult } from "@/shared/contracts/result";
 import type {
   MemoryRuleRow,
@@ -38,8 +39,13 @@ import { shareCategoryCorrection } from "@/server/modules/banking/category-feedb
  * colleague's correction.
  */
 
-/** Ledger accounts that stand for a bank account, by kind. */
-const BANK_LEDGER_CODE = { BANK: 701, CREDIT_CARD: 804 } as const;
+/**
+ * Ledger accounts that stand for a bank account, by kind.
+ *
+ * Taken from the chart rather than written out here, so that replacing the
+ * chart cannot leave these pointing at codes that now mean something else.
+ */
+const BANK_LEDGER_CODE = { BANK: CODE_CASH_AT_BANK, CREDIT_CARD: CODE_CREDIT_CARD } as const;
 
 const CONFLICT = "Someone else changed this transaction while you were editing it. Reload and try again.";
 
@@ -327,7 +333,11 @@ type Acceptable = Awaited<ReturnType<typeof repo.findOwnedTransactions>>[number]
  * the period the repayment falls in, the rest to principal. Deterministic
  * and reproducible from the loan's terms; never expensing the whole payment.
  */
-function loanAllocations(t: Acceptable, interestAccountId: string, principalAccountId: string): BankAllocation[] {
+function loanAllocations(
+  t: Acceptable,
+  interestAccount: { id: string; gstTreatment: GstTreatment },
+  principalAccountId: string,
+): BankAllocation[] {
   const magnitude = Math.abs(t.amountCents);
   if (!t.loan || t.loan.status !== "ACTIVE") return [{ accountId: principalAccountId, cents: magnitude, gstTreatment: "BAS_EXCLUDED" }];
   const schedule = loanSchedule(t.loan, t.date);
@@ -335,7 +345,9 @@ function loanAllocations(t: Acceptable, interestAccountId: string, principalAcco
   const interest = Math.max(0, Math.min(magnitude, due?.interestCents ?? 0));
   return [
     { accountId: principalAccountId, cents: magnitude - interest, gstTreatment: "BAS_EXCLUDED", description: "Principal" },
-    { accountId: interestAccountId, cents: interest, gstTreatment: "INPUT_TAXED", description: "Interest" },
+    // The interest account's own default treatment — whether the chart says
+    // input taxed or GST-free is the advisor's call, and never GST on expenses.
+    { accountId: interestAccount.id, cents: interest, gstTreatment: interestAccount.gstTreatment, description: "Interest" },
   ];
 }
 
@@ -404,7 +416,7 @@ export async function acceptTransactions(
       continue;
     }
     const allocations: BankAllocation[] = isLoanRepayment
-      ? loanAllocations(t, interestAccount!.id, accountId)
+      ? loanAllocations(t, interestAccount!, accountId)
       : [{ accountId, cents: Math.abs(t.amountCents), gstTreatment, subcontractorId: t.subcontractorId }];
 
     const clientId = t.bankAccount.clientId;

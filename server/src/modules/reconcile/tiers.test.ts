@@ -2,20 +2,32 @@ import { describe, expect, it } from "vitest";
 import { matchMemory } from "./memory";
 import { scoreRisk } from "./risk";
 import { applyRules } from "./rules";
+import {
+  CODE_BANK_FEES,
+  CODE_INTEREST_CHARGED,
+  CODE_INTEREST_INCOME,
+  CODE_LOAN_PRINCIPAL,
+  CODE_SUPERANNUATION,
+  CODE_TRANSFER,
+  CODE_WAGES,
+} from "@/server/au/coa";
 
 describe("applyRules", () => {
   it("codes the unambiguous cases without review", () => {
-    expect(applyRules("account keeping fee")).toMatchObject({ accountCode: 404, gstTreatment: "INPUT_TAXED", needsReview: false });
-    expect(applyRules("interest charged")).toMatchObject({ accountCode: 400, gstTreatment: "INPUT_TAXED" });
-    expect(applyRules("credit interest")).toMatchObject({ accountCode: 202, gstTreatment: "INPUT_TAXED" });
-    expect(applyRules("payroll run 12")).toMatchObject({ accountCode: 477, gstTreatment: "BAS_EXCLUDED" });
-    expect(applyRules("transfer to savings")).toMatchObject({ accountCode: 977, gstTreatment: "BAS_EXCLUDED" });
-    expect(applyRules("australiansuper contribution")).toMatchObject({ accountCode: 478 });
+    // Asserted through the constants, not literals: the chart was replaced
+    // once and every one of these numbers moved. A literal here would pass
+    // while pointing at an account that now means something else.
+    expect(applyRules("account keeping fee")).toMatchObject({ accountCode: CODE_BANK_FEES, gstTreatment: "GST_FREE_EXPENSES", needsReview: false });
+    expect(applyRules("interest charged")).toMatchObject({ accountCode: CODE_INTEREST_CHARGED, gstTreatment: "GST_FREE_EXPENSES" });
+    expect(applyRules("credit interest")).toMatchObject({ accountCode: CODE_INTEREST_INCOME, gstTreatment: "GST_FREE_INCOME" });
+    expect(applyRules("payroll run 12")).toMatchObject({ accountCode: CODE_WAGES, gstTreatment: "BAS_EXCLUDED" });
+    expect(applyRules("transfer to savings")).toMatchObject({ accountCode: CODE_TRANSFER, gstTreatment: "BAS_EXCLUDED" });
+    expect(applyRules("australiansuper contribution")).toMatchObject({ accountCode: CODE_SUPERANNUATION });
   });
 
   it("identifies but does not finish the ambiguous cases", () => {
     expect(applyRules("ato payment")).toMatchObject({ needsReview: true });
-    expect(applyRules("loan repayment")).toMatchObject({ accountCode: 840, needsReview: true });
+    expect(applyRules("loan repayment")).toMatchObject({ accountCode: CODE_LOAN_PRINCIPAL, needsReview: true });
   });
 
   it("leaves everything else to the next tier", () => {

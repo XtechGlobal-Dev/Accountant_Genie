@@ -223,7 +223,17 @@ export async function seedProposalsForFirm(tx: DbClient, firmId: string): Promis
   );
   let created = 0;
   for (const proposal of seedProposals()) {
-    if (existing.has(proposal.code)) continue;
+    if (existing.has(proposal.code)) {
+      // A proposal nobody has verified is still the catalogue's, so it follows
+      // the catalogue — when the chart of accounts is replaced, the account
+      // codes a mapping proposes move with it. A VERIFIED version is never
+      // touched: that is the advisor's, and versions are never edited.
+      await tx.taxRuleVersion.updateMany({
+        where: { firmId, code: proposal.code, status: "PENDING_VERIFICATION", valueText: { not: proposal.valueText }, note: proposal.note },
+        data: { valueText: proposal.valueText, label: proposal.label, description: proposal.description },
+      });
+      continue;
+    }
     await tx.taxRuleVersion.create({ data: { firmId, ...proposal }, select: { id: true } });
     created += 1;
   }

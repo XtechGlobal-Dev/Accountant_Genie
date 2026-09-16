@@ -41,7 +41,7 @@ beforeAll(async () => {
   clientId = client.id;
   const bank = await db.bankAccount.create({ data: { clientId, name: "Operating", isCashAtBank: true }, select: { id: true } });
   bankAccountId = bank.id;
-  const rent = await db.account.findFirst({ where: { code: 469, firmId: null }, select: { id: true } });
+  const rent = await db.account.findFirst({ where: { code: 480, firmId: null }, select: { id: true } });
   expenseAccountId = rent!.id;
 });
 
@@ -172,7 +172,10 @@ describe("the ledger balances after real postings", () => {
     const lines = await db.journalLine.findMany({ where: { bankTransactionId: tx.id }, select: { accountId: true, debitCents: true, creditCents: true, gstTreatment: true } });
     const principal = lines.find((l) => l.accountId === principalAccount!.id);
     const interest = lines.find((l) => l.accountId === interestAccount!.id);
-    expect(interest?.gstTreatment).toBe("INPUT_TAXED");
+    // The interest account's own default treatment, whatever the chart (and the advisor) say it is.
+    const interestDefault = await db.account.findFirst({ where: { code: CODE_INTEREST_CHARGED, firmId: null }, select: { gstTreatment: true } });
+    expect(interest?.gstTreatment).toBe(interestDefault?.gstTreatment);
+    expect(interest?.gstTreatment).not.toBe("GST_ON_EXPENSES");
     // 6% p.a. on $120,000 for the first month = $600.00 interest.
     expect(interest?.debitCents).toBe(60_000);
     expect(principal?.debitCents).toBe(1_032_800 - 60_000);

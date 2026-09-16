@@ -1,8 +1,10 @@
 import {
   CODE_BANK_FEES,
+  CODE_INCOME_TAX_PAYABLE,
   CODE_INTEREST_CHARGED,
   CODE_INTEREST_INCOME,
   CODE_LOAN_PRINCIPAL,
+  CODE_SUPERANNUATION,
   CODE_TRANSFER,
   CODE_WAGES,
 } from "@/server/au/coa";
@@ -30,9 +32,6 @@ export interface RuleHit {
   reason: string;
 }
 
-const CODE_SUPER = 478;
-const CODE_INCOME_TAX_PAYABLE = 830;
-
 interface Rule {
   name: string;
   test: RegExp;
@@ -55,25 +54,30 @@ export const RULES: readonly Rule[] = [
     name: "bank-fee",
     test: /\b(account (keeping|service) fee|monthly (account )?fee|bank fee|transaction fee|overdrawn fee|dishonour fee|international transaction fee)\b/,
     accountCode: CODE_BANK_FEES,
-    gstTreatment: "INPUT_TAXED",
+    // Follows account 320 in the chart, which the practice supplied as GST
+    // Free. That account is flagged for advisor review; if it is changed back
+    // to INPUT_TAXED, change this with it — the two must not disagree.
+    gstTreatment: "GST_FREE_EXPENSES",
     needsReview: false,
-    reason: "Bank fee — a financial supply, input taxed",
+    reason: "Bank fee — no GST credit claimable",
   },
   {
     name: "interest-charged",
     test: /\b(interest charged|debit interest|loan interest|overdraft interest|interest on (loan|overdraft))\b/,
     accountCode: CODE_INTEREST_CHARGED,
-    gstTreatment: "INPUT_TAXED",
+    // Follows account 400 in the chart. See the note on the bank-fee rule.
+    gstTreatment: "GST_FREE_EXPENSES",
     needsReview: false,
-    reason: "Interest charged — input taxed",
+    reason: "Interest charged — no GST credit claimable",
   },
   {
     name: "interest-received",
     test: /\b(interest (paid|received|earned|credit)|credit interest|deposit interest)\b/,
     accountCode: CODE_INTEREST_INCOME,
-    gstTreatment: "INPUT_TAXED",
+    // Follows account 202 in the chart. See the note on the bank-fee rule.
+    gstTreatment: "GST_FREE_INCOME",
     needsReview: false,
-    reason: "Interest received — input taxed",
+    reason: "Interest received — no GST on the supply",
   },
   {
     name: "wages",
@@ -86,7 +90,7 @@ export const RULES: readonly Rule[] = [
   {
     name: "superannuation",
     test: /\b(superannuation|super guarantee|australiansuper|hostplus|rest super|sunsuper|cbus|hesta|clearing house|superstream)\b/,
-    accountCode: CODE_SUPER,
+    accountCode: CODE_SUPERANNUATION,
     gstTreatment: "BAS_EXCLUDED",
     needsReview: false,
     reason: "Superannuation contribution — BAS excluded",

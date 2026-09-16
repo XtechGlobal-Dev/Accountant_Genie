@@ -12,7 +12,7 @@ import type { ClassificationInput, SubcontractorInput } from "./types";
  * claim quietly false the first time one of them is edited.
  */
 
-export const PROMPT_VERSION = "transaction-classification-v2";
+export const PROMPT_VERSION = "transaction-classification-v3";
 export const SUBCONTRACTOR_PROMPT_VERSION = "subcontractor-identification-v1";
 
 /**
@@ -52,7 +52,7 @@ function loadPrompt(file: string): string {
 
 /** Reads the versioned classification prompt. Throws if it is missing. */
 export function loadClassificationPrompt(): string {
-  return loadPrompt(join("transaction-classification", "v2.md"));
+  return loadPrompt(join("transaction-classification", "v3.md"));
 }
 
 /** Reads the versioned subcontractor-identification prompt. Throws if it is missing. */

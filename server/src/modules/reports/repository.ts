@@ -2,6 +2,7 @@ import "server-only";
 
 import { db, type DbClient } from "@/server/core/db";
 import type { Prisma } from "@/generated/prisma";
+import { CODE_CASH_AT_BANK, CODE_CREDIT_CARD } from "@/server/au/coa";
 
 /**
  * The reporting layer reads journal lines and nothing else.
@@ -63,7 +64,7 @@ export function listLinesInPeriod(firmId: string, clientId: string, start: Date,
 /** The ledger accounts that stand for a bank account, by code — left out of the transactions report. */
 export function listBankLedgerCodes() {
   return db.account.findMany({
-    where: { firmId: null, clientId: null, OR: [{ isCashAtBank: true }, { code: { in: [701, 804] } }] },
+    where: { firmId: null, clientId: null, OR: [{ isCashAtBank: true }, { code: { in: [CODE_CASH_AT_BANK, CODE_CREDIT_CARD] } }] },
     select: { code: true },
   });
 }

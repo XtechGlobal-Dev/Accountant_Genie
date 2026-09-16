@@ -35,15 +35,23 @@ the fix is more rules, not a better prompt.
 
 ## Deterministic rules to implement first
 
-These are unambiguous and must never reach the LLM:
+These are unambiguous and must never reach the LLM. The account codes are the named constants
+in `server/src/au/coa.ts` — never literals — because the chart was replaced once (16 September 2026)
+and every number moved, several to codes that previously meant something else:
 
-- Transfers between the client's own accounts → `977 Tracking Transfers`, `BAS_EXCLUDED`
-- ATO payments → `BAS_EXCLUDED`
-- Bank fees → `404`, `INPUT_TAXED`
-- Interest charged → `400`, `INPUT_TAXED`
-- Interest received → `202`, `INPUT_TAXED`
-- Payroll / wages → `477`, `BAS_EXCLUDED`
-- Loan repayments → split principal (`840`) from interest (`400`); never expense the whole payment
+- Transfers between the client's own accounts → `CODE_TRANSFER`, `BAS_EXCLUDED`
+- ATO payments → `CODE_INCOME_TAX_PAYABLE`, `BAS_EXCLUDED`, always to review
+- Bank fees → `CODE_BANK_FEES`, the account's default treatment (no GST credit either way)
+- Interest charged → `CODE_INTEREST_CHARGED`, the account's default treatment
+- Interest received → `CODE_INTEREST_INCOME`, the account's default treatment
+- Payroll / wages → `CODE_WAGES`, `BAS_EXCLUDED`
+- Superannuation → `CODE_SUPERANNUATION`, `BAS_EXCLUDED`
+- Loan repayments → `CODE_LOAN_PRINCIPAL`, to review; principal and interest (`CODE_INTEREST_CHARGED`)
+  are split at acceptance from the loan's amortisation schedule — never expense the whole payment
+
+Whether bank fees and interest are input taxed or GST-free is a treatment the supplied chart flags
+`REQUIRES_VERIFICATION`; the rules tier, the mock provider and the prompt all defer to the chart's
+default so the three tiers never disagree about one merchant.
 
 ## Coding memory
 
