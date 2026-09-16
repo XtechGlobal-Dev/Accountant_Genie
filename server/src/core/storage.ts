@@ -85,6 +85,18 @@ let cached: StorageDriver | null = null;
 export function getStorage(): StorageDriver {
   if (cached) return cached;
   const bucket = process.env.S3_BUCKET?.trim();
+  if (!bucket && process.env.NODE_ENV === "production") {
+    // An uploaded statement is a source document: the bottom of the lineage
+    // chain a report figure is traced back through, and it is retained for
+    // audit. Local disk cannot hold one in a deployed environment — Vercel is
+    // read-only, and a container filesystem is wiped on the next deploy. The
+    // second case is the dangerous one, because the writes appear to succeed
+    // and the files are simply gone later. Refuse at selection rather than
+    // lose them quietly.
+    throw new Error(
+      "S3_BUCKET is not set. Uploaded statements are retained for audit and cannot be kept on a deployed filesystem — configure S3, or an S3-compatible bucket via S3_ENDPOINT.",
+    );
+  }
   cached = bucket ? new S3Driver(bucket) : new LocalDriver();
   return cached;
 }

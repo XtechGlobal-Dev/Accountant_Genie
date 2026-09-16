@@ -1,0 +1,119 @@
+# Render — the background half of the deployment.
+#
+# The Next.js app runs on Vercel. Vercel's functions end when the response does,
+# so the in-process job runner cannot survive there: every import, reconciliation
+# and feed sync must be handed to Redis and executed by a process that outlives
+# the request. That process is this worker.
+#
+# Redis is the switch. With REDIS_URL set, `server/src/jobs/queue.ts` enqueues to
+# BullMQ instead of running the job inline — so the SAME value must be set on the
+# Vercel project and on this worker, or the app will enqueue into a queue nobody
+# reads (or, worse, run jobs inline and have them killed mid-ledger-write).
+#
+#   Vercel  — enqueues, streams progress from the Job/JobEvent rows
+#   Render  — this worker, dequeues and runs `runJob`
+#   Neon    — the one database both of them write to
+#
+# Deploy: Render Dashboard > Blueprints > New Blueprint Instance, pointed at this
+# repository. Secrets marked `sync: false` are entered in the dashboard and are
+# never committed.
+
+services:
+  - type: worker
+    name: accountant-genie-worker
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    # `npm ci` alone would drop devDependencies, because Render sets
+    # NODE_ENV=production by default — and `tsx`, which runs the worker, is one.
+    buildCommand: npm ci --include=dev && npm run generate --workspace @ledgerly/server
+    startCommand: npm run worker
+    # Migrations run once per deploy, before the new worker takes traffic, and
+    # over the DIRECT url — Neon's pooler does not carry the advisory locks
+    # Prisma takes during a migration. Deploy Render BEFORE Vercel so the schema
+    # is never behind the app reading it. The account sync applies src/au/coa.ts
+    # and is idempotent; it is NOT `db:seed`, which would create the demo firm.
+    preDeployCommand: npm run db:deploy && npm run db:sync-accounts
+    healthCheckPath: ""
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # ---- Database (Neon) -------------------------------------------------
+      - key: DATABASE_URL # POOLED  — host contains "-pooler"
+        sync: false
+      - key: DIRECT_DATABASE_URL # DIRECT — no "-pooler"; used by migrate
+        sync: false
+      # ---- Queue -----------------------------------------------------------
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: accountant-genie-redis
+          property: connectionString
+      - key: WORKER_CONCURRENCY
+        value: "2"
+      # ---- Auth ------------------------------------------------------------
+      # Must be byte-identical to the value on Vercel: it is the pepper for
+      # one-time codes, and a worker that disagrees invalidates them.
+      - key: AUTH_SECRET
+        sync: false
+      # ---- AI --------------------------------------------------------------
+      # The worker is where reconciliation actually runs, so this is the process
+      # that needs the key. Without it the rules + memory tiers still resolve and
+      # the rest is routed to human review.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RECONCILE_BATCH_SIZE
+        value: "40"
+      - key: RECONCILE_CONFIDENCE_FLOOR
+        value: "0.75"
+      - key: RECONCILE_AUTO_CONFIDENCE
+        value: "0.95"
+      - key: RECONCILE_HIGH_RISK_CENTS
+        value: "500000"
+      - key: RECONCILE_NOVELTY_RISK_CENTS
+        value: "50000"
+      - key: RECONCILE_PRE_AI_TARGET
+        value: "0.6"
+      # ---- Storage (AWS S3) ------------------------------------------------
+      # Import jobs read the uploaded statement back out of storage. Both hosts
+      # must point at the same bucket or the worker cannot find the file the
+      # request wrote.
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: ap-southeast-2
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # ---- Bank feeds (Fiskil) ---------------------------------------------
+      # The feed sync job calls Fiskil from here.
+      - key: FISKIL_CLIENT_ID
+        sync: false
+      - key: FISKIL_CLIENT_SECRET
+        sync: false
+      - key: FISKIL_BASE_URL
+        value: https://api.fiskil.com
+      - key: FISKIL_API_VERSION
+        value: v3
+      # ---- Email -----------------------------------------------------------
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+
+  - type: keyvalue
+    name: accountant-genie-redis
+    plan: starter
+    region: singapore
+    # BullMQ needs no eviction: a dropped job id is a job that silently never runs.
+    maxmemoryPolicy: noeviction
+    ipAllowList:
+      # Vercel's egress is not a fixed range, so the app reaches Redis over the
+      # public endpoint. Replace with Render's private network by moving the app
+      # to Render, or keep the queue reachable and rely on the connection string
+      # as the credential.
+      - source: 0.0.0.0/0
+        description: everywhere (Vercel egress is not a fixed range)

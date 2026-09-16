@@ -10,6 +10,13 @@ import { eventsSince, findOwnedJob } from "@/server/jobs/service";
  */
 export const dynamic = "force-dynamic";
 
+/**
+ * A serverless host ends a function on its own clock, not on the stream. 300s is
+ * the Vercel ceiling on Pro; past it the connection is cut, the browser reconnects
+ * and the loop below replays the persisted events, so nothing is lost.
+ */
+export const maxDuration = 300;
+
 const POLL_MS = 1_000;
 const MAX_MS = 15 * 60 * 1_000;
 
