@@ -10,7 +10,11 @@ import { purgeFirms } from "../helpers/purge-firm";
  * what makes it structurally impossible; this proves it stayed that way.
  */
 
-process.loadEnvFile?.(".env");
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // Absent in CI — the environment provides DATABASE_URL.
+}
 
 const STAMP = Date.now();
 let firmId = "";

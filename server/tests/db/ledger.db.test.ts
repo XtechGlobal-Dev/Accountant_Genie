@@ -17,7 +17,11 @@ import { purgeFirms } from "../helpers/purge-firm";
  * reversal nets a BAS back to what it was.
  */
 
-process.loadEnvFile?.(".env");
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // Absent in CI — the environment provides DATABASE_URL.
+}
 
 const STAMP = Date.now();
 let firmId = "";

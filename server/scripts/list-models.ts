@@ -13,7 +13,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
-process.loadEnvFile(".env");
+// The environment may already be set (CI, a host): a missing .env is not an error.
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // .env is absent — the environment is expected to provide the variables.
+}
 
 const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
 const openaiKey = process.env.OPENAI_API_KEY?.trim();

@@ -26,7 +26,11 @@ import { purgeFirms } from "../helpers/purge-firm";
  * is not finished.
  */
 
-process.loadEnvFile?.(".env");
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // Absent in CI — the environment provides DATABASE_URL.
+}
 
 interface Fixture {
   firmId: string;

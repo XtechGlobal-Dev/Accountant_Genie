@@ -10,7 +10,12 @@
  * `server-only` throws outside the React server condition, so this runs under
  * `--conditions=react-server` (see the package script).
  */
-process.loadEnvFile(".env");
+// The environment may already be set (CI, a host): a missing .env is not an error.
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // .env is absent — the environment is expected to provide the variables.
+}
 
 const { syncSystemAccounts } = await import("../prisma/accounts-sync.js");
 const { db } = await import("../src/core/db.js");

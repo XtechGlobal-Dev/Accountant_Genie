@@ -6,7 +6,12 @@ import { gstFromGross, naturalGross } from "../src/au/gst.js";
 import { seedProposals } from "../src/modules/tax-rules/catalogue.js";
 import type { GstTreatment } from "../generated/prisma/client.js";
 
-process.loadEnvFile(".env");
+// The environment may already be set (CI, a host): a missing .env is not an error.
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // .env is absent — the environment is expected to provide the variables.
+}
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const db = new PrismaClient({ adapter });

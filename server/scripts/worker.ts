@@ -9,7 +9,12 @@
  */
 import { Worker } from "bullmq";
 
-process.loadEnvFile(".env");
+// The environment may already be set (CI, a host): a missing .env is not an error.
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // .env is absent — the environment is expected to provide the variables.
+}
 
 const url = process.env.REDIS_URL?.trim();
 if (!url) {
