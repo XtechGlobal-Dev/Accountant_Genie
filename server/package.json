@@ -21,7 +21,8 @@
     "test:watch": "vitest",
     "test:idor": "vitest run --config vitest.idor.config.ts",
     "typecheck": "tsc --noEmit -p .",
-    "fiskil:check": "tsx --conditions=react-server scripts/check-fiskil.ts"
+    "fiskil:check": "tsx --conditions=react-server scripts/check-fiskil.ts",
+    "db:sync-accounts": "tsx --conditions=react-server scripts/sync-accounts.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

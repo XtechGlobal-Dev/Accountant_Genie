@@ -30,8 +30,16 @@ import * as repo from "./repository";
  * client. Nothing in this file adds two amounts together.
  */
 
-/** Direct wages (325) and Wages & Salaries (477) both report at W1. */
-const WAGES_CODES: readonly number[] = [325, CODE_WAGES];
+/**
+ * Accounts whose gross reports at BAS label W1.
+ *
+ * Only Wages & Salaries (600). The chart replaced on 2026-09-16 has no
+ * separate direct-wages account, and 325 — which used to be one — now means
+ * Bank Charges, so it must NOT be listed here. Directors or Management Fees
+ * (370) may also belong at W1; that is a question for the registered advisor,
+ * not an assumption to make here.
+ */
+const WAGES_CODES: readonly number[] = [CODE_WAGES];
 
 type Row = Awaited<ReturnType<typeof repo.listLinesInPeriod>>[number];
 

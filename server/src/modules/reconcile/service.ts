@@ -2,6 +2,7 @@ import "server-only";
 
 import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
+import { CODE_CASH_AT_BANK, CODE_CREDIT_CARD } from "@/server/au/coa";
 import { gstFromGross } from "@/server/au/gst";
 import * as accountsRepo from "@/server/modules/accounts/repository";
 import * as clients from "@/server/modules/clients/repository";
@@ -29,8 +30,13 @@ import { shareCategoryCorrection } from "@/server/modules/banking/category-feedb
  * between coding and acceptance, and the ledger must not find out later.
  */
 
-/** Ledger accounts that stand for a bank account, by kind. */
-const BANK_LEDGER_CODE = { BANK: 701, CREDIT_CARD: 804 } as const;
+/**
+ * Ledger accounts that stand for a bank account, by kind.
+ *
+ * Taken from the chart rather than written out here, so that replacing the
+ * chart cannot leave these pointing at codes that now mean something else.
+ */
+const BANK_LEDGER_CODE = { BANK: CODE_CASH_AT_BANK, CREDIT_CARD: CODE_CREDIT_CARD } as const;
 
 type Row = Awaited<ReturnType<typeof repo.listTransactions>>[number];
 
