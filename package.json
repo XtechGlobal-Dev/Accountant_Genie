@@ -16,6 +16,8 @@
     "typecheck": "tsc --noEmit -p .",
     "bootstrap": "npm run bootstrap --workspace @ledgerly/server",
     "db:push": "npm run db:push --workspace @ledgerly/server",
+    "db:deploy": "npm run db:deploy --workspace @ledgerly/server",
+    "db:status": "npm run db:status --workspace @ledgerly/server",
     "db:seed": "npm run db:seed --workspace @ledgerly/server",
     "db:reset": "npm run db:reset --workspace @ledgerly/server",
     "db:check": "npm run db:check --workspace @ledgerly/server",
@@ -31,6 +33,9 @@
     "fiskil:check": "npm run fiskil:check --workspace @ledgerly/server",
     "test:db": "npm run test:db --workspace @ledgerly/server",
     "db:sync-accounts": "npm run db:sync-accounts --workspace @ledgerly/server"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@fiskil/link": "0.1.10",
