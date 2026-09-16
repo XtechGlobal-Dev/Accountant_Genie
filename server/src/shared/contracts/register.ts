@@ -19,6 +19,29 @@ export interface SubcontractorRow {
   createdAt: Date;
 }
 
+/** One unlinked payment and what the model proposes for it. A person confirms; nothing is written. */
+export interface SubcontractorProposal {
+  transactionId: string;
+  date: Date;
+  description: string;
+  amountCents: number;
+  /** A subcontractor already on the register, when the payment matches one. */
+  knownId: string | null;
+  knownName: string | null;
+  /** A trading name to add, when the payee is not on the register. */
+  proposedName: string | null;
+  confidence: number;
+  reason: string;
+}
+
+export interface SubcontractorProposals {
+  proposals: SubcontractorProposal[];
+  provider: string | null;
+  promptVersion: string | null;
+  /** Set when the model declined or failed; every proposal is then empty. */
+  failure: string | null;
+}
+
 export interface AssetRow {
   id: string;
   name: string;
@@ -85,6 +108,10 @@ export interface DepreciationSchedule {
   fy: number;
   /** Which verified thresholds were applied. */
   thresholds?: { writeOffCents: number | null; carLimitCents: number | null } | undefined;
+  /** False when the method rates are the statutory fallback rather than a verified rule. */
+  methodsVerified?: boolean | undefined;
+  /** The verified tax rule versions the schedule was computed under, by rule code. */
+  ruleVersions?: Record<string, string | null> | undefined;
   lines: DepreciationLine[];
   totalDepreciationCents: number;
   totalDeductibleCents: number;
@@ -125,6 +152,10 @@ export interface TparLine {
 
 export interface TparReport {
   fy: number;
+  /** The account codes the report sums — from the verified TPAR_ACCOUNTS rule, or the chart's default. */
+  accountCodes: number[];
+  /** Whether that mapping has been verified by the firm's registered tax advisor. */
+  mappingVerified: boolean;
   lines: TparLine[];
   totalGrossCents: number;
   totalGstCents: number;

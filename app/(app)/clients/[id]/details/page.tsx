@@ -214,7 +214,7 @@ export default async function ClientDetailsPage({
             <dl className="px-5 py-2">
               <Row label="Entity type" value={ENTITY_LABELS[client.entityType]} />
               {client.entityType === "COMPANY" ? (
-                <Row label="Income tax rate" value={<span className="figure">{client.incomeTaxRate ?? 25}%</span>} />
+                <Row label="Income tax rate" value={<span className="figure">{client.incomeTaxRatePercent ?? 25}%</span>} />
               ) : null}
               {client.entityType === "UNIT_TRUST" ? (
                 <>

@@ -91,6 +91,8 @@ export function AccountModal({
       size="lg"
     >
       <form onSubmit={submitWith(handleSubmit)}>
+        {/* The row version this form opened with; a stale save is refused, not merged. */}
+        {account ? <input type="hidden" name="version" value={account.version} /> : null}
         <div className="flex flex-col gap-5 px-5 py-5">
           {error && !field ? <Alert tone="negative">{error}</Alert> : null}
 

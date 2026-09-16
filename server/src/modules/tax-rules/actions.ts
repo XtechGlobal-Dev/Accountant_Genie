@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/server/core/session";
-import { can, forbidden } from "@/server/core/permissions";
+import { can, canVerifyTax, forbidden } from "@/server/core/permissions";
 import { CalendarDateSchema } from "@/server/modules/ledger/schema";
 import { parseCents } from "@/shared/money";
 import type { ActionResult } from "@/shared/contracts/result";
@@ -19,7 +19,7 @@ const ProposeSchema = z.object({
 
 export async function proposeTaxRule(formData: FormData): Promise<ActionResult> {
   const session = await requireSession();
-  if (!can(session, "organisation:manage") && !session.isTaxAgent) return forbidden();
+  if (!can(session, "organisation:manage") && !can(session, "tax:verify")) return forbidden();
 
   const parsed = ProposeSchema.safeParse({
     code: formData.get("code"),
@@ -47,10 +47,15 @@ export async function proposeTaxRule(formData: FormData): Promise<ActionResult> 
   return result;
 }
 
-/** Only a registered tax agent signs a rule off. That is the whole point of the workflow. */
+/**
+ * Only a registered tax agent with the `tax:verify` permission signs a rule
+ * off. Both are checked: the registration is what makes the sign-off mean
+ * something, the permission is what stops a registration ticked on a form
+ * from carrying the firm's books on its own.
+ */
 export async function verifyTaxRule(versionId: string, formData: FormData): Promise<ActionResult> {
   const session = await requireSession();
-  if (!session.isTaxAgent) return { ok: false, error: "Only a registered tax agent can verify a tax rule" };
+  if (!canVerifyTax(session)) return { ok: false, error: "Only a registered tax agent with verification rights can verify a tax rule" };
 
   const note = String(formData.get("note") ?? "").trim().slice(0, 500) || null;
   const result = await service.verifyVersion(session.firmId, session.userId, versionId, note);

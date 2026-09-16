@@ -2,7 +2,6 @@ import "server-only";
 
 import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
-import * as banking from "@/server/modules/banking/repository";
 import * as clients from "@/server/modules/clients/repository";
 import type { ActionResult } from "@/shared/contracts/result";
 import type { BillingState, PlanOption } from "@/shared/contracts/billing";
@@ -28,6 +27,25 @@ function toOption(plan: Plan): PlanOption {
   };
 }
 
+/**
+ * What the plan has been used for: the sum of usage events in the current
+ * plan year. Usage is metered on reconciled transactions — the append-only,
+ * idempotent events acceptance writes — never on a count of rows that a
+ * re-import or a reopen would move.
+ */
+export async function usedThisPlanYear(firmId: string): Promise<number> {
+  const firm = await db.firm.findUnique({ where: { id: firmId }, select: { planChangedAt: true, createdAt: true } });
+  const anchor = firm?.planChangedAt ?? firm?.createdAt ?? new Date();
+  // The plan year that contains today, anchored on when the plan started.
+  const start = new Date(anchor);
+  while (start.getTime() + 365 * 86_400_000 <= Date.now()) start.setUTCFullYear(start.getUTCFullYear() + 1);
+  const sum = await db.usageEvent.aggregate({
+    where: { firmId, kind: "RECONCILED_TRANSACTION", createdAt: { gte: start } },
+    _sum: { quantity: true },
+  });
+  return sum._sum.quantity ?? 0;
+}
+
 export async function getBillingState(firmId: string): Promise<BillingState | null> {
   const firm = await db.firm.findUnique({
     where: { id: firmId },
@@ -35,7 +53,7 @@ export async function getBillingState(firmId: string): Promise<BillingState | nu
   });
   if (!firm) return null;
   const [used, clientCount] = await Promise.all([
-    banking.countTransactionsForFirm(firmId),
+    usedThisPlanYear(firmId),
     clients.countClients(firmId, false),
   ]);
   const current = planByCode(firm.planCode);

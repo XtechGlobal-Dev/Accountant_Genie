@@ -9,24 +9,37 @@ import type { Prisma } from "@/generated/prisma";
  * for particular clients.
  *
  * The `OR` is the ownership path — another firm's custom accounts never match.
+ *
+ * A treatment sign-off is a per-firm `AccountVerification` row, read alongside
+ * the account. System accounts are shared by every firm, so the shared row is
+ * never written to by a firm's advisor.
  */
 
-const ROW_SELECT = {
-  id: true,
-  code: true,
-  name: true,
-  description: true,
-  type: true,
-  gstTreatment: true,
-  isSystem: true,
-  isActive: true,
-  firmId: true,
-  clientId: true,
-  requiresVerification: true,
-  taxNote: true,
-  client: { select: { businessName: true } },
-  _count: { select: { journalLines: true } },
-} satisfies Prisma.AccountSelect;
+const rowSelect = (firmId: string) =>
+  ({
+    id: true,
+    code: true,
+    name: true,
+    description: true,
+    type: true,
+    gstTreatment: true,
+    isSystem: true,
+    isActive: true,
+    firmId: true,
+    clientId: true,
+    requiresVerification: true,
+    taxNote: true,
+    version: true,
+    client: { select: { businessName: true } },
+    _count: { select: { journalLines: true } },
+    verifications: {
+      where: { firmId },
+      take: 1,
+      select: { verifiedAt: true, note: true, verifiedBy: { select: { name: true } } },
+    },
+  }) satisfies Prisma.AccountSelect;
+
+export type AccountRow = Prisma.AccountGetPayload<{ select: ReturnType<typeof rowSelect> }>;
 
 /** Everything the firm can see. With a client, only what applies to that client. */
 export function listAccounts(firmId: string, clientId?: string) {
@@ -39,7 +52,7 @@ export function listAccounts(firmId: string, clientId?: string) {
       ],
     },
     orderBy: [{ code: "asc" }, { createdAt: "asc" }],
-    select: ROW_SELECT,
+    select: rowSelect(firmId),
   });
 }
 
@@ -107,7 +120,7 @@ export function resolveForFirm(firmId: string, ids: readonly string[]) {
 export function findOwnedCustomAccount(firmId: string, accountId: string) {
   return db.account.findFirst({
     where: { id: accountId, firmId, isSystem: false },
-    select: ROW_SELECT,
+    select: rowSelect(firmId),
   });
 }
 
@@ -126,14 +139,36 @@ export function findCodeClash(firmId: string, code: number, exceptAccountId?: st
   });
 }
 
-/** Any account the firm can see, system ones included — for verification. */
+/** Any account the firm can see, system ones included — for verification. Read only. */
 export function findVisibleAccount(firmId: string, accountId: string) {
   return db.account.findFirst({
     where: {
       id: accountId,
       OR: [{ firmId: null, clientId: null }, { firmId }],
     },
-    select: { id: true, code: true, name: true, gstTreatment: true, requiresVerification: true, taxNote: true, clientId: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      gstTreatment: true,
+      requiresVerification: true,
+      taxNote: true,
+      clientId: true,
+      verifications: { where: { firmId }, take: 1, select: { id: true, verifiedAt: true } },
+    },
+  });
+}
+
+/** Record this firm's sign-off of an account's treatment. One row per firm and account. */
+export function upsertVerification(
+  tx: DbClient,
+  data: { firmId: string; accountId: string; verifiedById: string; note: string | null },
+) {
+  return tx.accountVerification.upsert({
+    where: { firmId_accountId: { firmId: data.firmId, accountId: data.accountId } },
+    create: data,
+    update: { verifiedById: data.verifiedById, verifiedAt: new Date(), note: data.note },
+    select: { id: true },
   });
 }
 
@@ -141,10 +176,22 @@ export function createAccount(tx: DbClient, data: Prisma.AccountUncheckedCreateI
   return tx.account.create({ data, select: { id: true } });
 }
 
-export function updateAccount(
+/**
+ * Update a custom account the firm owns. The firm is in the `where`, so a
+ * shared system account — or another firm's — matches nothing. Optimistic:
+ * when `expectedVersion` is given the write applies only if nobody else has
+ * edited the row since it was read; the caller treats zero rows as a conflict.
+ */
+export async function updateOwnedAccount(
   tx: DbClient,
+  firmId: string,
   accountId: string,
   data: Prisma.AccountUncheckedUpdateInput,
-) {
-  return tx.account.update({ where: { id: accountId }, data, select: { id: true } });
+  expectedVersion?: number,
+): Promise<number> {
+  const { count } = await tx.account.updateMany({
+    where: { id: accountId, firmId, ...(expectedVersion !== undefined ? { version: expectedVersion } : {}) },
+    data: { ...data, version: { increment: 1 } },
+  });
+  return count;
 }

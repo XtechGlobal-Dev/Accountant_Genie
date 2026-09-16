@@ -21,7 +21,7 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
-    exclude: ["**/node_modules/**", "tests/idor/**"],
+    exclude: ["**/node_modules/**", "tests/idor/**", "tests/db/**"],
     environment: "node",
   },
 });

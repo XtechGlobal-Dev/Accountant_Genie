@@ -382,21 +382,36 @@ export async function completeFeedConnection(
   const connection = await findOwnedConnection(firmId, connectionId);
   if (!connection) return { ok: false, error: "Connection not found" };
 
-  await db.bankFeedConnection.updateMany({
-    where: { id: connection.id, client: { firmId } },
-    data: {
-      externalConnectionId: connection.externalConnectionId ?? externalConnectionId,
-      arrangementId: connection.arrangementId ?? externalConnectionId,
-      status: connection.status === "PENDING" ? "ACTIVE" : connection.status,
-      consentedAt: new Date(),
-    },
-  });
+  // The consent row, the request it answers and the audit entry are one
+  // transaction: a consent that is active with no record of becoming so is
+  // exactly the half-state an auditor asks about.
+  await db.$transaction(async (tx) => {
+    await tx.bankFeedConnection.updateMany({
+      where: { id: connection.id, client: { firmId } },
+      data: {
+        externalConnectionId: connection.externalConnectionId ?? externalConnectionId,
+        arrangementId: connection.arrangementId ?? externalConnectionId,
+        status: connection.status === "PENDING" ? "ACTIVE" : connection.status,
+        consentedAt: new Date(),
+      },
+    });
 
-  // Tie the email request that produced this consent to the consent itself, so
-  // "we asked on the 3rd, they authorised on the 9th" is one readable story.
-  await db.bankFeedRequest.updateMany({
-    where: { clientId: connection.clientId, status: "CONNECTED", connectionId: null },
-    data: { connectionId: connection.id },
+    // Tie the email request that produced this consent to the consent itself, so
+    // "we asked on the 3rd, they authorised on the 9th" is one readable story.
+    await tx.bankFeedRequest.updateMany({
+      where: { clientId: connection.clientId, status: "CONNECTED", connectionId: null },
+      data: { connectionId: connection.id },
+    });
+
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId: connection.clientId,
+      action: "BANK_FEED_CONNECTED",
+      entityType: "BankFeedConnection",
+      entityId: connection.id,
+      after: { by: userId ? "firm" : "client", externalConnectionId, activated: connection.status === "PENDING" },
+    });
   });
 
   return { ok: true, id: connection.id };
@@ -431,50 +446,53 @@ export async function refreshConnections(
     return { ok: false, error: feedErrorMessage(error) };
   }
 
-  for (const consent of consents) {
-    await db.bankFeedConnection.upsert({
-      where: {
-        provider_externalConnectionId: {
-          provider: provider.name,
-          externalConnectionId: consent.externalConnectionId,
-        },
-      },
-      update: {
-        status: consent.status,
-        arrangementId: consent.arrangementId,
-        institutionId: consent.institutionId,
-        institutionName: consent.institutionName,
-        expiresAt: consent.expiresAt,
-        revokedAt: consent.revokedAt,
-      },
-      create: {
-        clientId: client.id,
-        provider: provider.name,
-        externalUserId: client.feedEndUserId,
-        externalConnectionId: consent.externalConnectionId,
-        arrangementId: consent.arrangementId,
-        institutionId: consent.institutionId,
-        institutionName: consent.institutionName,
-        status: consent.status,
-        consentedAt: consent.consentedAt,
-        expiresAt: consent.expiresAt,
-        revokedAt: consent.revokedAt,
-      },
-    });
-  }
-
-  // A PENDING row whose auth session has lapsed is an abandoned consent. It is
-  // marked, not deleted: "the client started and did not finish" is useful.
-  await db.bankFeedConnection.updateMany({
-    where: {
-      clientId: client.id,
-      status: "PENDING",
-      authSessionExpiresAt: { lt: new Date() },
-    },
-    data: { status: "EXPIRED" },
-  });
-
+  // Every row the provider's list changes, the expiry sweep and the audit
+  // entry commit together: the audit row describes exactly the state it
+  // landed with, never a state that was half-written when the process died.
   await db.$transaction(async (tx) => {
+    for (const consent of consents) {
+      await tx.bankFeedConnection.upsert({
+        where: {
+          provider_externalConnectionId: {
+            provider: provider.name,
+            externalConnectionId: consent.externalConnectionId,
+          },
+        },
+        update: {
+          status: consent.status,
+          arrangementId: consent.arrangementId,
+          institutionId: consent.institutionId,
+          institutionName: consent.institutionName,
+          expiresAt: consent.expiresAt,
+          revokedAt: consent.revokedAt,
+        },
+        create: {
+          clientId: client.id,
+          provider: provider.name,
+          externalUserId: client.feedEndUserId!,
+          externalConnectionId: consent.externalConnectionId,
+          arrangementId: consent.arrangementId,
+          institutionId: consent.institutionId,
+          institutionName: consent.institutionName,
+          status: consent.status,
+          consentedAt: consent.consentedAt,
+          expiresAt: consent.expiresAt,
+          revokedAt: consent.revokedAt,
+        },
+      });
+    }
+
+    // A PENDING row whose auth session has lapsed is an abandoned consent. It is
+    // marked, not deleted: "the client started and did not finish" is useful.
+    await tx.bankFeedConnection.updateMany({
+      where: {
+        clientId: client.id,
+        status: "PENDING",
+        authSessionExpiresAt: { lt: new Date() },
+      },
+      data: { status: "EXPIRED" },
+    });
+
     await recordAudit(tx, {
       firmId,
       userId,
@@ -516,9 +534,20 @@ export async function revokeFeedConnection(
   } else if (provider && !connection.arrangementId) {
     // Nothing exists at the provider yet — an abandoned consent attempt. Mark
     // it locally so the screen is not stuck showing a pending connection.
-    await db.bankFeedConnection.update({
-      where: { id: connection.id },
-      data: { status: "EXPIRED" },
+    await db.$transaction(async (tx) => {
+      await tx.bankFeedConnection.updateMany({
+        where: { id: connection.id, client: { firmId } },
+        data: { status: "EXPIRED" },
+      });
+      await recordAudit(tx, {
+        firmId,
+        userId,
+        clientId: connection.clientId,
+        action: "BANK_FEED_REVOKED",
+        entityType: "BankFeedConnection",
+        entityId: connection.id,
+        after: { by: "firm", outcome: "abandoned attempt marked expired" },
+      });
     });
     return { ok: true, id: connection.id };
   }
@@ -730,8 +759,8 @@ export async function respondToFeedRequest(
     return { recorded: true, consentUrl: null, error: started.error };
   }
 
-  await db.bankFeedRequest.update({
-    where: { id: row.id },
+  await db.bankFeedRequest.updateMany({
+    where: { id: row.id, client: { firmId: row.client.firmId } },
     data: { connectionId: started.connectionId },
   });
 

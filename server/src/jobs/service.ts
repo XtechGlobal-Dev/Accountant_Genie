@@ -2,10 +2,13 @@ import "server-only";
 
 import { db } from "@/server/core/db";
 import type { JobEventView, JobView } from "@/shared/contracts/job";
+import { reapStaleJobs } from "./queue";
 
 /** Reads over jobs, scoped by firm. Progress comes from rows, never from memory. */
 
 export async function listJobs(firmId: string, take = 30): Promise<JobView[]> {
+  // A job whose process died mid-run would otherwise sit RUNNING forever.
+  await reapStaleJobs(firmId);
   const rows = await db.job.findMany({
     where: { firmId },
     orderBy: { createdAt: "desc" },
@@ -76,12 +79,12 @@ export async function findOwnedJob(firmId: string, jobId: string) {
   return db.job.findFirst({ where: { id: jobId, firmId }, select: { id: true, status: true, progress: true } });
 }
 
-/** Events after a given time, oldest first — the SSE route's poll. */
-export async function eventsSince(jobId: string, after: Date | null): Promise<JobEventView[]> {
+/** Events after a given time, oldest first — the SSE route's poll. Ownership is in the query. */
+export async function eventsSince(firmId: string, jobId: string, after: Date | null): Promise<JobEventView[]> {
   const [job, events] = await Promise.all([
-    db.job.findUnique({ where: { id: jobId }, select: { status: true, progress: true } }),
+    db.job.findFirst({ where: { id: jobId, firmId }, select: { status: true, progress: true } }),
     db.jobEvent.findMany({
-      where: { jobId, ...(after ? { createdAt: { gt: after } } : {}) },
+      where: { jobId, job: { firmId }, ...(after ? { createdAt: { gt: after } } : {}) },
       orderBy: { createdAt: "asc" },
       select: { stage: true, processed: true, total: true, message: true, createdAt: true },
     }),

@@ -63,7 +63,16 @@ export const AU_CHART_OF_ACCOUNTS: SeedAccount[] = [
     taxNote:
       "Interest is a financial supply and therefore input taxed, not GST-free. Input-taxed and GST-free differ on the BAS (GST-free income reports at G1; input-taxed sales are backed out at G4). Some practitioners code interest as GST Free Income. CONFIRM with the registered advisor before GA — an error here misstates G1 for every client holding a bank account.",
   },
-  { code: 203, name: "Rebates & Grants", type: "INCOME", gstTreatment: "BAS_EXCLUDED", description: "Rebates, incentive payments and government grants" },
+  {
+    code: 203,
+    name: "Rebates & Grants",
+    type: "INCOME",
+    gstTreatment: "BAS_EXCLUDED",
+    description: "Rebates, incentive payments and government grants",
+    requiresVerification: true,
+    taxNote:
+      "Not every grant is outside the GST system: a grant paid for a supply (something the client has to do in return) is a taxable sale at G1/1A, and fuel tax credits report at their own label, not here. BAS_EXCLUDED is the safe default only while the advisor confirms which grants this firm's clients receive.",
+  },
   {
     code: 204,
     name: "Rent Received - Commercial",
@@ -89,8 +98,13 @@ export const AU_CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: 330, name: "Freight & Courier", type: "COGS", gstTreatment: "GST_ON_EXPENSES" },
   { code: 335, name: "Closing Stock", type: "COGS", gstTreatment: "BAS_EXCLUDED" },
 
+  // A refund given to a customer reduces sales, so it lives with income on
+  // the income side of the chart: a debit here is negative income, which
+  // reduces G1 and 1A instead of inflating G11 and 1B. A refund RECEIVED from
+  // a supplier is a credit against the expense account it reverses.
+  { code: 290, name: "Customer Refunds", type: "INCOME", gstTreatment: "GST_ON_INCOME", description: "Refunds given to customers — reduces sales, G1 and 1A" },
+
   // ---------------------------------------------------- Operating expenses
-  { code: 290, name: "Refunds", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Refunds of purchases or customer payments" },
   { code: 400, name: "Interest Charges", type: "EXPENSE", gstTreatment: "INPUT_TAXED", description: "Interest on loans and overdrafts — a financial supply" },
   { code: 404, name: "Bank Fees", type: "EXPENSE", gstTreatment: "INPUT_TAXED", description: "Account keeping and transaction fees — input taxed, no GST credit" },
   { code: 408, name: "Merchant & Payment Processing Fees", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Stripe, Square, EFTPOS and similar merchant fees" },
@@ -116,10 +130,27 @@ export const AU_CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: 482, name: "Staff Amenities", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES" },
   { code: 485, name: "Subscriptions & Memberships", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES" },
   { code: 489, name: "Travel - National", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES" },
-  { code: 493, name: "Travel - International", type: "EXPENSE", gstTreatment: "GST_FREE_EXPENSES", description: "International travel is GST free" },
+  {
+    code: 493,
+    name: "Travel - International",
+    type: "EXPENSE",
+    gstTreatment: "GST_FREE_EXPENSES",
+    description: "International airfares are GST free; overseas accommodation and meals are outside the GST system",
+    requiresVerification: true,
+    taxNote:
+      "International air travel is GST-free (reports at G11). Accommodation, meals and transport consumed overseas are not a taxable supply in Australia at all, which some practitioners code BAS_EXCLUDED rather than GST_FREE. The difference is G11 only — never 1B — but the advisor decides which this firm reports.",
+  },
   { code: 499, name: "Licences & Permits", type: "EXPENSE", gstTreatment: "GST_FREE_EXPENSES", description: "Government licences and permits — generally GST free" },
   { code: 505, name: "Income Tax Expense", type: "EXPENSE", gstTreatment: "BAS_EXCLUDED" },
-  { code: 510, name: "Insurance - Workers Compensation", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES" },
+  {
+    code: 510,
+    name: "Insurance - Workers Compensation",
+    type: "EXPENSE",
+    gstTreatment: "GST_ON_EXPENSES",
+    requiresVerification: true,
+    taxNote:
+      "Workers compensation is a state scheme and the GST treatment of premiums differs between them (some insurer-issued policies carry GST; some statutory scheme charges do not). The firm's state is on the Firm record — the advisor confirms the treatment for it.",
+  },
   { code: 515, name: "Depreciation", type: "EXPENSE", gstTreatment: "BAS_EXCLUDED", description: "Non-cash depreciation of fixed assets" },
 
   // ---------------------------------------------------------------- Assets

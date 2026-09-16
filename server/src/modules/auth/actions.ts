@@ -121,6 +121,17 @@ export async function inviteUser(formData: FormData): Promise<service.InviteResu
   return result;
 }
 
+/** Confer or withdraw a colleague's tax-agent registration. Needs `users:manage`. */
+export async function setTaxAgentStatus(userId: string, formData: FormData): Promise<ActionResult> {
+  const session = await requireSession();
+  if (!can(session, "users:manage")) return forbidden();
+  const parsed = fromForm.taxAgent(formData);
+  if (!parsed.success) return invalid(parsed.error);
+  const result = await service.setTaxAgent(session.firmId, session.userId, userId, parsed.data);
+  if (result.ok) revalidatePath("/settings/team");
+  return result;
+}
+
 export async function changeRole(userId: string, formData: FormData): Promise<ActionResult> {
   const session = await requireSession();
   if (!can(session, "users:manage")) return forbidden();

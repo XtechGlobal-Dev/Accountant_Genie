@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/server/core/session";
+import { can } from "@/server/core/permissions";
 import { getClientHeader } from "@/server/modules/clients/service";
 import { abn as formatAbn } from "@/shared/format";
 import { BAS_FREQUENCY_LABELS, ENTITY_LABELS, GST_BASIS_LABELS } from "@/shared/labels";
@@ -20,8 +21,11 @@ import { Avatar, Badge } from "@/ui/primitives";
  */
 
 async function loadHeader(clientId: string) {
-  const { firmId } = await requireSession();
-  return getClientHeader(firmId, clientId);
+  const session = await requireSession();
+  // A client's workspace needs `client:read`. Without it the client is
+  // "not found" for this person, exactly as another firm's would be.
+  if (!can(session, "client:read")) return null;
+  return getClientHeader(session.firmId, clientId);
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {

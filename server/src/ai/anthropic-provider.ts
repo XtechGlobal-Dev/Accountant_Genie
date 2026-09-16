@@ -2,16 +2,26 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import {
   PROMPT_VERSION,
+  SUBCONTRACTOR_PROMPT_VERSION,
   buildStableContext,
+  buildSubcontractorContext,
   buildTransactionContext,
+  hashInput,
   loadClassificationPrompt,
+  loadSubcontractorPrompt,
 } from "./prompt";
 import {
   ClassificationBatchSchema,
+  SubcontractorBatchSchema,
   sanitiseResult,
+  sanitiseSubcontractor,
   type AccountingAIProvider,
   type ClassificationInput,
   type ClassificationResponse,
+  type ProviderFailure,
+  type ProviderMeta,
+  type SubcontractorInput,
+  type SubcontractorResponse,
 } from "./types";
 
 /**
@@ -34,6 +44,11 @@ const MAX_TOKENS = 32_000;
  * the one place where trading quality for tokens is tempting and wrong: a
  * transaction sent to review costs fifteen seconds, a confident miscoding costs
  * a wrong BAS.
+ *
+ * `messages.stream().finalMessage()` rather than `messages.parse()`: the two
+ * return the same `parsed_output`, `stop_reason` and usage for a
+ * `zodOutputFormat` request, and streaming keeps a 32k-token response from
+ * tripping the SDK's non-streaming timeout on a large batch.
  */
 export class AnthropicProvider implements AccountingAIProvider {
   readonly name = "anthropic";
@@ -55,16 +70,14 @@ export class AnthropicProvider implements AccountingAIProvider {
    * offline rather than steady it. Depth is controlled by `output_config.effort`.
    */
   async classifyTransactions(input: ClassificationInput): Promise<ClassificationResponse> {
-    const meta = {
-      provider: this.name,
-      model: this.model,
-      promptVersion: PROMPT_VERSION,
-    };
-
+    const meta: ProviderMeta = { provider: this.name, model: this.model, promptVersion: PROMPT_VERSION };
     try {
       // Read inside the try: a missing or unreadable prompt routes the batch to
       // review like any other provider failure, rather than killing the job.
       const systemPrompt = loadClassificationPrompt();
+      const stable = buildStableContext(input);
+      const batch = buildTransactionContext(input);
+      meta.inputHash = hashInput(systemPrompt, stable, batch);
 
       // Everything stable for this client — the prompt, the chart of accounts
       // and the coding memory — goes in `system` with the cache breakpoint
@@ -76,65 +89,86 @@ export class AnthropicProvider implements AccountingAIProvider {
           max_tokens: MAX_TOKENS,
           system: [
             { type: "text", text: systemPrompt },
-            {
-              type: "text",
-              text: buildStableContext(input),
-              cache_control: { type: "ephemeral" },
-            },
+            { type: "text", text: stable, cache_control: { type: "ephemeral" } },
           ],
-          messages: [{ role: "user", content: buildTransactionContext(input) }],
-          output_config: {
-            format: zodOutputFormat(ClassificationBatchSchema),
-          },
+          messages: [{ role: "user", content: batch }],
+          output_config: { format: zodOutputFormat(ClassificationBatchSchema) },
         })
         .finalMessage();
 
-      const usage = {
-        // The response reports which model actually served it. Recording that
-        // rather than the requested id keeps lineage truthful — a report must
-        // name the model that produced the coding, not the one we asked for.
-        model: response.model ?? this.model,
-        inputTokens: response.usage?.input_tokens,
-        outputTokens: response.usage?.output_tokens,
-        cacheReadTokens: response.usage?.cache_read_input_tokens ?? undefined,
-        cacheWriteTokens: response.usage?.cache_creation_input_tokens ?? undefined,
-      };
+      Object.assign(meta, usageOf(response, this.model));
 
-      // A safety decline arrives as HTTP 200 with stop_reason "refusal", so it
-      // has to be checked before the content is read. It routes the whole batch
-      // to human review — never to a default coding.
-      if (response.stop_reason === "refusal") {
-        return {
-          results: [],
-          meta: { ...meta, ...usage },
-          failure: {
-            kind: "refusal",
-            detail: response.stop_details?.explanation ?? "Model declined the request",
-          },
-        };
-      }
+      const failure = failureOf(response);
+      if (failure) return { results: [], meta, failure };
 
-      const parsed = response.parsed_output;
-      if (!parsed) {
-        return {
-          results: [],
-          meta: { ...meta, ...usage },
-          failure: {
-            kind: "invalid_output",
-            detail: describeEmptyOutput(response.stop_reason),
-          },
-        };
-      }
-
-      return {
-        results: parsed.results.map(sanitiseResult),
-        meta: { ...meta, ...usage },
-      };
+      return { results: response.parsed_output!.results.map(sanitiseResult), meta };
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       return { results: [], meta, failure: { kind: "error", detail } };
     }
   }
+
+  async identifySubcontractors(input: SubcontractorInput): Promise<SubcontractorResponse> {
+    const meta: ProviderMeta = { provider: this.name, model: this.model, promptVersion: SUBCONTRACTOR_PROMPT_VERSION };
+    try {
+      const systemPrompt = loadSubcontractorPrompt();
+      const context = buildSubcontractorContext(input);
+      meta.inputHash = hashInput(systemPrompt, context);
+
+      const response = await this.client.messages
+        .stream({
+          model: this.model,
+          max_tokens: MAX_TOKENS,
+          system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+          messages: [{ role: "user", content: context }],
+          output_config: { format: zodOutputFormat(SubcontractorBatchSchema) },
+        })
+        .finalMessage();
+
+      Object.assign(meta, usageOf(response, this.model));
+
+      const failure = failureOf(response);
+      if (failure) return { results: [], meta, failure };
+
+      return { results: response.parsed_output!.results.map(sanitiseSubcontractor), meta };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { results: [], meta, failure: { kind: "error", detail } };
+    }
+  }
+}
+
+type FinalMessage = Awaited<ReturnType<ReturnType<Anthropic["messages"]["stream"]>["finalMessage"]>>;
+
+/**
+ * The response reports which model actually served it. Recording that rather
+ * than the requested id keeps lineage truthful — a report must name the model
+ * that produced the coding, not the one we asked for.
+ */
+function usageOf(response: FinalMessage, requested: string): Partial<ProviderMeta> {
+  return {
+    model: response.model ?? requested,
+    inputTokens: response.usage?.input_tokens,
+    outputTokens: response.usage?.output_tokens,
+    cacheReadTokens: response.usage?.cache_read_input_tokens ?? undefined,
+    cacheWriteTokens: response.usage?.cache_creation_input_tokens ?? undefined,
+  };
+}
+
+/**
+ * Two guards, in this order. A safety decline arrives as HTTP 200 with
+ * stop_reason "refusal", so it is checked BEFORE the content is read. Then a
+ * null `parsed_output` — truncation, a context overflow — is a failure too.
+ * Both route the whole batch to human review, never to a default coding.
+ */
+function failureOf(response: FinalMessage): ProviderFailure | null {
+  if (response.stop_reason === "refusal") {
+    return { kind: "refusal", detail: response.stop_details?.explanation ?? "Model declined the request" };
+  }
+  if (!response.parsed_output) {
+    return { kind: "invalid_output", detail: describeEmptyOutput(response.stop_reason) };
+  }
+  return null;
 }
 
 /**

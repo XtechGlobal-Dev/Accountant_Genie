@@ -81,6 +81,9 @@ model Firm {
   memoryRules MemoryRule[]
   auditLogs   AuditLog[]
   jobs        Job[]
+  taxRuleVersions      TaxRuleVersion[]
+  accountVerifications AccountVerification[]
+  usageEvents          UsageEvent[]
 }
 
 /// Roles map to permissions in one place: server/core/permissions.ts.
@@ -124,12 +127,19 @@ model User {
   otpCodes       OtpCode[]
   trustedDevices TrustedDevice[]
   verifiedRules  TaxRuleVersion[]
+  accountVerifications AccountVerification[]
+  preparedBas    BasStatement[]  @relation("BasPreparedBy")
+  finalisedBas   BasStatement[]  @relation("BasFinalisedBy")
 
   @@index([firmId])
 }
 
 /// A sliding-window counter for throttling — failed sign-ins per email and
 /// per address, code requests, and so on. Keyed by what is being limited.
+/// Throttle counters. Deliberately outside the "every model carries id,
+/// createdAt and a firm path" rule: the key is the identity (a hashed email
+/// or an IP), the window is the lifetime, and the rows are infrastructure,
+/// not tenant data — nothing here is ever read for a firm.
 model RateLimit {
   key         String   @id
   count       Int      @default(0)
@@ -235,7 +245,8 @@ model Client {
   gstBasis      GstBasis     @default(CASH)
   basFrequency  BasFrequency @default(QUARTERLY)
   // Company / unit trust equity inputs
-  incomeTaxRate Int?         @default(25) // percent
+  /// Whole percent (25 = 25%). Not money, so no Cents suffix; the unit is in the name.
+  incomeTaxRatePercent Int?  @default(25)
   totalUnits    Int?
   unitValueCents Int?
   email         String?
@@ -247,9 +258,12 @@ model Client {
   feedEndUserId String?      @unique
   /// Soft archive — clients are never hard-deleted, they hold accounting history
   archivedAt    DateTime?
+  /// Optimistic lock. Incremented on every edit; a stale edit is refused, not merged.
+  version       Int          @default(0)
   createdAt     DateTime     @default(now())
 
   firm           Firm             @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  basStatements  BasStatement[]
   bankAccounts   BankAccount[]
   journalEntries JournalEntry[]
   accounts       Account[]
@@ -391,18 +405,44 @@ model Account {
   requiresVerification Boolean @default(false)
   /// Why the treatment is uncertain — shown to the advisor, not to end users
   taxNote      String?
+  /// Optimistic lock for custom-account edits.
+  version      Int          @default(0)
   createdAt    DateTime     @default(now())
 
-  firm             Firm?             @relation(fields: [firmId], references: [id], onDelete: Cascade)
-  client           Client?           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// Restrict: an account is deactivated, never deleted, and a firm or client
+  /// that owns accounts with history cannot be removed from underneath them.
+  firm             Firm?             @relation(fields: [firmId], references: [id], onDelete: Restrict)
+  client           Client?           @relation(fields: [clientId], references: [id], onDelete: Restrict)
   journalLines     JournalLine[]
   bankTransactions BankTransaction[]
   memoryRules      MemoryRule[]
+  verifications    AccountVerification[]
 
   @@unique([code, firmId, clientId])
   @@index([firmId])
   @@index([clientId])
   @@index([code])
+}
+
+/// A firm's registered tax agent signing off a flagged tax treatment — for
+/// that firm only. System accounts are shared by every firm, so the sign-off
+/// lives here rather than as a flag on the shared row: one firm's advisor can
+/// never clear a verification that another firm then relies on.
+model AccountVerification {
+  id           String   @id @default(cuid())
+  firmId       String
+  accountId    String
+  verifiedById String?
+  verifiedAt   DateTime @default(now())
+  note         String?
+  createdAt    DateTime @default(now())
+
+  firm       Firm    @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  account    Account @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  verifiedBy User?   @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@unique([firmId, accountId])
+  @@index([accountId])
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +517,8 @@ model StatementImport {
   createdAt     DateTime     @default(now())
   completedAt   DateTime?
 
-  bankAccount  BankAccount       @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  /// Restrict: the original file is the last hop of every report's lineage.
+  bankAccount  BankAccount       @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
   transactions BankTransaction[]
 
   @@index([bankAccountId])
@@ -495,6 +536,12 @@ enum ClassificationSource {
   MEMORY
   AI
   MANUAL
+}
+
+/// Scored separately from confidence. See reconcile/risk.ts.
+enum RiskLevel {
+  LOW
+  HIGH
 }
 
 model BankTransaction {
@@ -547,13 +594,17 @@ model BankTransaction {
   /// Whether a person must look before this can be accepted. Rules and memory
   /// clear it; the AI tier sets it whenever confidence or risk says so.
   needsReview Boolean @default(true)
-  /// LOW or HIGH — scored separately from confidence. See reconcile/risk.ts.
-  risk        String?
-  /// Lineage: provider, model, prompt version, rules version, memory version.
+  /// Scored separately from confidence. See reconcile/risk.ts.
+  risk        RiskLevel?
+  /// Lineage: provider, model, prompt version, rules version, memory version,
+  /// input hash, the raw proposal, and when the decision was made.
   aiMeta      Json?
   memoryRuleId String?
   /// For TPAR: which subcontractor a payment went to.
   subcontractorId String?
+  /// A loan repayment: which facility it repays. Acceptance then splits the
+  /// posting into principal and interest from the loan's amortisation.
+  loanId          String?
 
   journalEntryId String?
   reviewedAt     DateTime?
@@ -561,21 +612,33 @@ model BankTransaction {
   /// Excluded from the books (a personal transaction, a duplicate). Never deleted.
   excludedAt     DateTime?
   excludeReason  String?
+  /// Optimistic lock. Two accountants on one review screen: the second
+  /// stale write is refused with a conflict, never silently merged.
+  version        Int       @default(0)
   createdAt      DateTime  @default(now())
 
-  bankAccount   BankAccount      @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  /// Restrict: bank transactions are accounting history and are never deleted
+  /// through a parent.
+  bankAccount   BankAccount      @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
   import        StatementImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
   account       Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
   journalEntry  JournalEntry?    @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
   memoryRule    MemoryRule?      @relation(fields: [memoryRuleId], references: [id], onDelete: SetNull)
   subcontractor Subcontractor?   @relation(fields: [subcontractorId], references: [id], onDelete: SetNull)
+  loan          Loan?            @relation(fields: [loanId], references: [id], onDelete: SetNull)
+  /// Every journal line this transaction produced, across posting and reversal.
+  journalLines  JournalLine[]    @relation("LineSource")
 
   @@unique([bankAccountId, fingerprint])
   @@unique([bankAccountId, externalId])
   @@index([bankAccountId, date])
+  /// The review screen's predicate: one client's open work, by state.
+  @@index([bankAccountId, status, needsReview])
   @@index([status])
   @@index([accountId])
+  @@index([importId])
   @@index([subcontractorId])
+  @@index([loanId])
 }
 
 // ---------------------------------------------------------------------------
@@ -604,9 +667,14 @@ model JournalEntry {
   /// The entry this one reverses, when it is a reversal.
   reversesId  String?       @unique
   postedById  String?
+  /// Which versions of the deterministic tax arithmetic produced the GST on
+  /// these lines (e.g. "gst-rate:2000-07-01"). Lets a historical entry name
+  /// the rule it was computed under, as the au-tax-rules skill requires.
+  rulesVersion String?
   createdAt   DateTime      @default(now())
 
-  client       Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// Restrict: the ledger is never deleted through a parent.
+  client       Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
   postedBy     User?             @relation(fields: [postedById], references: [id], onDelete: SetNull)
   reverses     JournalEntry?     @relation("Reversal", fields: [reversesId], references: [id], onDelete: Restrict)
   reversedBy   JournalEntry?     @relation("Reversal")
@@ -631,14 +699,20 @@ model JournalLine {
   description    String?
   /// For TPAR: a payment to a subcontractor, when the line records one.
   subcontractorId String?
+  /// Lineage: the bank transaction this line was posted from, when it was.
+  /// Entry-level `BankTransaction.journalEntryId` is not enough once an entry
+  /// can carry more than one transaction's lines.
+  bankTransactionId String?
 
-  entry         JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
-  account       Account        @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  subcontractor Subcontractor? @relation(fields: [subcontractorId], references: [id], onDelete: SetNull)
+  entry           JournalEntry     @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  account         Account          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  subcontractor   Subcontractor?   @relation(fields: [subcontractorId], references: [id], onDelete: SetNull)
+  bankTransaction BankTransaction? @relation("LineSource", fields: [bankTransactionId], references: [id], onDelete: SetNull)
 
   @@index([journalEntryId])
   @@index([accountId])
   @@index([subcontractorId])
+  @@index([bankTransactionId])
 }
 
 // ---------------------------------------------------------------------------
@@ -663,17 +737,21 @@ model MemoryRule {
   /// How many human corrections taught this rule. Repeats raise confidence.
   evidenceCount Int         @default(1)
   createdById  String?
+  /// Optimistic lock for edits on the memory page.
+  version      Int          @default(0)
   createdAt    DateTime     @default(now())
   lastUsedAt   DateTime?
 
   firm         Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
   client       Client?           @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  account      Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Restrict: an account a rule points at is deactivated, never deleted.
+  account      Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
   transactions BankTransaction[]
 
   @@unique([firmId, clientId, pattern])
   @@index([firmId])
   @@index([clientId])
+  @@index([firmId, clientId, matchType])
 }
 
 // ---------------------------------------------------------------------------
@@ -724,7 +802,7 @@ model Asset {
   disposalCents          Int?
   createdAt              DateTime           @default(now())
 
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   @@index([clientId])
 }
@@ -768,7 +846,8 @@ model Loan {
   accountId              String?
   createdAt              DateTime      @default(now())
 
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client       Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  transactions BankTransaction[]
 
   @@index([clientId])
 }
@@ -785,7 +864,7 @@ model Subcontractor {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  client       Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client       Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
   lines        JournalLine[]
   transactions BankTransaction[]
 
@@ -837,9 +916,13 @@ model AuditLog {
   entityId   String
   before     Json?
   after      Json?
+  /// Where the change came from, when it came through a request.
+  ip         String?
+  userAgent  String?
   createdAt  DateTime @default(now())
 
-  firm Firm  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  /// Restrict: an audit trail is never deleted, not even with its firm.
+  firm Firm  @relation(fields: [firmId], references: [id], onDelete: Restrict)
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([firmId, createdAt])
@@ -971,22 +1054,33 @@ model BankFeedConnection {
 /// Panel shows, this is the *accounting* record of what data arrived and when.
 /// An auditor asking "where did this transaction come from, and when did we
 /// receive it" is answered from here.
+enum FeedSyncTrigger {
+  WEBHOOK
+  MANUAL
+  BACKFILL
+}
+
+enum FeedSyncStatus {
+  RUNNING
+  OK
+  ERROR
+}
+
 model FeedSyncRun {
-  id            String    @id @default(cuid())
+  id            String          @id @default(cuid())
   clientId      String
   connectionId  String?
-  /// WEBHOOK | MANUAL | BACKFILL
-  trigger       String
+  trigger       FeedSyncTrigger
   /// The provider event that caused it, for a webhook-triggered run.
   event         String?
-  /// RUNNING | OK | ERROR
-  status        String    @default("RUNNING")
-  pagesFetched  Int       @default(0)
-  rowsInserted  Int       @default(0)
-  rowsUpdated   Int       @default(0)
+  status        FeedSyncStatus  @default(RUNNING)
+  pagesFetched  Int             @default(0)
+  rowsInserted  Int             @default(0)
+  rowsUpdated   Int             @default(0)
   error         String?
-  startedAt     DateTime  @default(now())
+  startedAt     DateTime        @default(now())
   finishedAt    DateTime?
+  createdAt     DateTime        @default(now())
 
   client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
   connection BankFeedConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
@@ -1007,9 +1101,15 @@ enum TaxRuleStatus {
 
 /// A tax rule the software depends on, as a dated version. A figure with no
 /// value has not been supplied by the registered tax advisor and is not
-/// applied. Platform-wide (`firmId` null): tax law does not vary by firm.
+/// applied.
+///
+/// Scoped to the firm. Tax law does not vary by firm, but *who is accountable
+/// for the figure* does: each firm's own registered tax agent signs off the
+/// values that firm's reports use, and no self-declared agent on one firm can
+/// ever change what another firm's depreciation or BAS reads.
 model TaxRuleVersion {
   id            String        @id @default(cuid())
+  firmId        String
   /// e.g. INSTANT_ASSET_WRITE_OFF, CAR_LIMIT, BAS_W1_ACCOUNTS
   code          String
   label         String
@@ -1026,9 +1126,109 @@ model TaxRuleVersion {
   verifiedAt    DateTime?
   createdAt     DateTime      @default(now())
 
+  firm       Firm  @relation(fields: [firmId], references: [id], onDelete: Cascade)
   verifiedBy User? @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
 
-  @@index([code, effectiveFrom])
+  @@index([firmId, code, effectiveFrom])
+}
+
+// ---------------------------------------------------------------------------
+// BAS statements — a prepared activity statement, kept as it was prepared
+// ---------------------------------------------------------------------------
+
+enum BasStatementStatus {
+  DRAFT
+  FINAL
+}
+
+/// A Business Activity Statement as it was prepared for a period.
+///
+/// The live BAS report recomputes from the ledger on every view. This is the
+/// snapshot a firm actually reviewed and handed to the tax agent: each label
+/// keeps the figure the system calculated, any manual adjustment, and the
+/// final figure as three separate columns, so an adjustment never overwrites
+/// what was computed. `taxRuleVersions` names the verified rule versions in
+/// force when it was prepared. Never edited once FINAL; a later period is a
+/// new statement, a correction is a new DRAFT.
+model BasStatement {
+  id              String             @id @default(cuid())
+  clientId        String
+  /// Half-open [periodStart, periodEnd) in UTC, as au/fy.ts produces them.
+  periodStart     DateTime
+  periodEnd       DateTime
+  periodLabel     String
+  fy              Int
+  quarter         Int?
+  month           Int?
+  status          BasStatementStatus @default(DRAFT)
+  /// Snapshots of the client's settings when prepared.
+  gstRegistered   Boolean
+  gstBasis        GstBasis
+  /// Whether every mapping rule the labels depend on was verified at the time.
+  mappingVerified Boolean            @default(false)
+  /// { ruleCode: taxRuleVersionId } for every rule consulted.
+  taxRuleVersions Json?
+  /// Journal lines the figures were built from, and how many were unresolved.
+  lineCount       Int                @default(0)
+  unresolvedCount Int                @default(0)
+  preparedById    String?
+  finalisedById   String?
+  finalisedAt     DateTime?
+  version         Int                @default(0)
+  createdAt       DateTime           @default(now())
+
+  client      Client             @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  preparedBy  User?              @relation("BasPreparedBy", fields: [preparedById], references: [id], onDelete: SetNull)
+  finalisedBy User?              @relation("BasFinalisedBy", fields: [finalisedById], references: [id], onDelete: SetNull)
+  lines       BasStatementLine[]
+
+  @@index([clientId, periodStart])
+}
+
+/// One label on a prepared BAS. Three figures, never collapsed into one.
+model BasStatementLine {
+  id              String @id @default(cuid())
+  statementId     String
+  /// G1, G10, G11, 1A, 1B, W1, W2
+  label           String
+  /// What the reporting layer computed from the ledger.
+  calculatedCents Int
+  /// A manual adjustment the preparer entered, with its reason. Zero when none.
+  adjustmentCents Int    @default(0)
+  /// calculated + adjustment. Stored, not derived, so the row is self-evident.
+  finalCents      Int
+  note            String?
+
+  statement BasStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+
+  @@unique([statementId, label])
+}
+
+// ---------------------------------------------------------------------------
+// Usage — append-only metering, idempotent by key
+// ---------------------------------------------------------------------------
+
+enum UsageKind {
+  /// A bank transaction a person accepted and posted. The unit plans meter on.
+  RECONCILED_TRANSACTION
+}
+
+/// One billable event. Append-only: rows are never updated or deleted, and
+/// the idempotency key makes a retried acceptance count once. Plan allowances
+/// are compared against a sum over these rows for the plan year.
+model UsageEvent {
+  id             String    @id @default(cuid())
+  firmId         String
+  kind           UsageKind
+  quantity       Int       @default(1)
+  /// The bank transaction, import or job the event came from.
+  entityId       String?
+  idempotencyKey String    @unique
+  createdAt      DateTime  @default(now())
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Restrict)
+
+  @@index([firmId, createdAt])
 }
 
 /// A provider webhook event we have accepted. Its presence is the replay

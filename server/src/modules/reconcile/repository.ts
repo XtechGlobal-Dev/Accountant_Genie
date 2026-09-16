@@ -39,6 +39,8 @@ export const TX_SELECT = {
   excludeReason: true,
   memoryRuleId: true,
   subcontractorId: true,
+  loanId: true,
+  version: true,
   account: { select: { code: true, name: true, type: true, isActive: true } },
   bankAccount: { select: { name: true, kind: true, clientId: true } },
 } satisfies Prisma.BankTransactionSelect;
@@ -81,6 +83,7 @@ export function listForEngine(firmId: string, clientId: string, ids?: readonly s
       // normalised description and never see these.
       feedCategory: true,
       feedSubcategory: true,
+      feedMerchantCode: true,
     },
   });
 }
@@ -112,6 +115,7 @@ export function findOwnedTransaction(firmId: string, transactionId: string) {
               gstCents: true,
               gstTreatment: true,
               subcontractorId: true,
+              bankTransactionId: true,
             },
           },
         },
@@ -133,16 +137,51 @@ export function findOwnedTransactions(firmId: string, ids: readonly string[]) {
           client: { select: { gstRegistered: true } },
         },
       },
+      loan: {
+        select: {
+          id: true,
+          principalCents: true,
+          interestRateBasisPoints: true,
+          startDate: true,
+          termMonths: true,
+          repaymentCents: true,
+          frequency: true,
+          status: true,
+        },
+      },
     },
   });
 }
 
+/** A write that bumps the row's version, so every edit is visible to the optimistic lock. */
 export function updateTransaction(
   tx: DbClient,
   transactionId: string,
   data: Prisma.BankTransactionUncheckedUpdateInput,
 ) {
-  return tx.bankTransaction.update({ where: { id: transactionId }, data, select: { id: true } });
+  return tx.bankTransaction.update({
+    where: { id: transactionId },
+    data: { ...data, version: { increment: 1 } },
+    select: { id: true },
+  });
+}
+
+/**
+ * The optimistic write: applies only when the row is still at the version
+ * the caller read. Zero rows means someone else got there first, and the
+ * caller reports a conflict rather than overwriting their correction.
+ */
+export async function updateTransactionIfVersion(
+  tx: DbClient,
+  transactionId: string,
+  expectedVersion: number,
+  data: Prisma.BankTransactionUncheckedUpdateInput,
+): Promise<number> {
+  const { count } = await tx.bankTransaction.updateMany({
+    where: { id: transactionId, version: expectedVersion },
+    data: { ...data, version: { increment: 1 } },
+  });
+  return count;
 }
 
 export async function summary(firmId: string, clientId: string) {
@@ -162,14 +201,24 @@ export async function summary(firmId: string, clientId: string) {
   return { total, notCoded, needsReview, coded, reviewed, excluded };
 }
 
-/** Descriptions a person has already signed off for this client — the opposite of novel. */
-export async function reviewedDescriptions(firmId: string, clientId: string): Promise<Set<string>> {
+/**
+ * What a person has already signed off for this client: every reviewed
+ * description and the accounts it was coded to. Absence is novelty; a
+ * proposal that disagrees with the set is inconsistency. Both are risk.
+ */
+export async function reviewedCodings(firmId: string, clientId: string): Promise<Map<string, Set<string>>> {
   const rows = await db.bankTransaction.findMany({
-    where: { ...owned(firmId, clientId), status: "REVIEWED" },
-    distinct: ["normalised"],
-    select: { normalised: true },
+    where: { ...owned(firmId, clientId), status: "REVIEWED", accountId: { not: null } },
+    select: { normalised: true, accountId: true },
   });
-  return new Set(rows.map((row) => row.normalised));
+  const map = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (!row.accountId) continue;
+    const set = map.get(row.normalised) ?? new Set<string>();
+    set.add(row.accountId);
+    map.set(row.normalised, set);
+  }
+  return map;
 }
 
 /** The system ledger account a bank account posts against (Cash at Bank, Credit Card). */
@@ -195,6 +244,7 @@ const MEMORY_SELECT = {
   evidenceCount: true,
   lastUsedAt: true,
   createdAt: true,
+  version: true,
   client: { select: { businessName: true } },
   account: { select: { code: true, name: true, type: true, isActive: true } },
 } satisfies Prisma.MemoryRuleSelect;
@@ -220,38 +270,6 @@ export function findOwnedMemoryRule(firmId: string, ruleId: string) {
   return db.memoryRule.findFirst({ where: { id: ruleId, firmId }, select: MEMORY_SELECT });
 }
 
-export function upsertMemoryRule(
-  tx: DbClient,
-  data: {
-    firmId: string;
-    clientId: string | null;
-    pattern: string;
-    matchType: "EXACT" | "CONTAINS";
-    accountId: string;
-    gstTreatment: Prisma.MemoryRuleUncheckedCreateInput["gstTreatment"];
-    createdById: string;
-  },
-) {
-  return tx.memoryRule.upsert({
-    where: {
-      firmId_clientId_pattern: {
-        firmId: data.firmId,
-        // Prisma's compound unique needs a value; null matches null here.
-        clientId: data.clientId as string,
-        pattern: data.pattern,
-      },
-    },
-    create: data,
-    update: {
-      matchType: data.matchType,
-      accountId: data.accountId,
-      gstTreatment: data.gstTreatment,
-      evidenceCount: { increment: 1 },
-    },
-    select: { id: true },
-  });
-}
-
 /**
  * Firm-wide rules have a null clientId, which a compound-unique upsert cannot
  * address. Look one up explicitly and create or update by ID instead.
@@ -272,7 +290,26 @@ export function updateMemoryRule(
   ruleId: string,
   data: Prisma.MemoryRuleUncheckedUpdateInput,
 ) {
-  return tx.memoryRule.update({ where: { id: ruleId }, data, select: { id: true } });
+  return tx.memoryRule.update({
+    where: { id: ruleId },
+    data: { ...data, version: { increment: 1 } },
+    select: { id: true },
+  });
+}
+
+/** Optimistic edit of a rule the firm owns. Zero rows = someone else saved first. */
+export async function updateMemoryRuleIfVersion(
+  tx: DbClient,
+  firmId: string,
+  ruleId: string,
+  expectedVersion: number,
+  data: Prisma.MemoryRuleUncheckedUpdateInput,
+): Promise<number> {
+  const { count } = await tx.memoryRule.updateMany({
+    where: { id: ruleId, firmId, version: expectedVersion },
+    data: { ...data, version: { increment: 1 } },
+  });
+  return count;
 }
 
 export function deleteMemoryRule(tx: DbClient, ruleId: string) {

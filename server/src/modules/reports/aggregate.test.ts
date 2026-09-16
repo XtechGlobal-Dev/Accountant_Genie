@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AccountType, GstTreatment } from "@/shared/enums";
-import { profitAndLoss, simpleBas, type LedgerLine } from "./aggregate";
+import { profitAndLoss, simpleBas, tpar, transactionsReport, type LedgerLine } from "./aggregate";
 
 let counter = 0;
 
@@ -72,7 +72,7 @@ describe("profitAndLoss", () => {
 });
 
 describe("simpleBas", () => {
-  const accounts = { wagesCodes: [325, 477], paygWithholdingCode: 825 };
+  const accounts = { wagesCodes: [325, 477], paygWithholdingCode: 825, inputTaxed: { salesAtG1: false, purchasesAtG11: false } };
 
   it("maps each treatment to its labels and sums the posted GST", () => {
     const bas = simpleBas(LINES, accounts);
@@ -114,5 +114,78 @@ describe("simpleBas", () => {
     const bas = simpleBas([SALE, unknown, untagged], accounts);
     expect(bas.unresolvedCount).toBe(2);
     expect(bas.figures.G1.cents).toBe(1_100_000);
+  });
+});
+
+describe("simpleBas — input-taxed supplies", () => {
+  const withRule = { wagesCodes: [325, 477], paygWithholdingCode: 825, inputTaxed: { salesAtG1: true, purchasesAtG11: true } };
+  const withoutRule = { wagesCodes: [325, 477], paygWithholdingCode: 825, inputTaxed: { salesAtG1: false, purchasesAtG11: false } };
+  const INTEREST = line({ accountCode: 202, accountType: "INCOME", gstTreatment: "INPUT_TAXED", creditCents: 4_200 });
+
+  it("leaves input-taxed lines out of every label until the rule is verified, and counts them", () => {
+    const bas = simpleBas([SALE, FEES, INTEREST], withoutRule);
+    expect(bas.figures.G1.cents).toBe(1_100_000);
+    expect(bas.figures.G11.cents).toBe(0);
+    expect(bas.inputTaxedOmittedCount).toBe(2);
+    // 1A / 1B never see input-taxed lines either way.
+    expect(bas.figures["1A"].cents).toBe(100_000);
+    expect(bas.figures["1B"].cents).toBe(0);
+  });
+
+  it("counts input-taxed sales at G1 and purchases at G11 once the rule says so, with no GST", () => {
+    const bas = simpleBas([SALE, FEES, INTEREST], withRule);
+    expect(bas.figures.G1.cents).toBe(1_100_000 + 4_200);
+    expect(bas.figures.G11.cents).toBe(1_500);
+    expect(bas.figures["1A"].cents).toBe(100_000);
+    expect(bas.figures["1B"].cents).toBe(0);
+    expect(bas.inputTaxedOmittedCount).toBe(0);
+  });
+});
+
+describe("transactionsReport", () => {
+  const bankSide = [701, 804];
+  const fromBank = (l: LedgerLine): LedgerLine => ({ ...l, entrySource: "BANK" });
+  const manual = (l: LedgerLine): LedgerLine => ({ ...l, entrySource: "MANUAL" });
+
+  it("sums accepted bank postings per account, leaving the bank side out", () => {
+    const report = transactionsReport([SALE, SALE_BANK, RENT, RENT_BANK].map(fromBank), bankSide);
+    expect(report.accounts.map((a) => a.code)).toEqual([200, 469]);
+    const sales = report.accounts[0]!;
+    expect(sales.count).toBe(1);
+    expect(sales.grossCents).toBe(1_100_000);
+    expect(sales.gstCents).toBe(100_000);
+    expect(sales.netCents).toBe(1_000_000);
+    expect(report.totalGrossCents).toBe(1_100_000 + 330_000);
+    expect(report.totalGstCents).toBe(130_000);
+    expect(report.lineCount).toBe(2);
+  });
+
+  it("ignores manual journals — only bank-sourced entries are transactions", () => {
+    const report = transactionsReport([manual(SALE), manual(SALE_BANK), fromBank(RENT), fromBank(RENT_BANK)], bankSide);
+    expect(report.accounts.map((a) => a.code)).toEqual([469]);
+    expect(report.totalCount).toBe(1);
+  });
+});
+
+describe("tpar", () => {
+  const paid = (subcontractorId: string | null, cents: number, gst: number, name = "Sub") => ({
+    debitCents: cents,
+    creditCents: 0,
+    gstCents: gst,
+    subcontractorId,
+    subcontractor: subcontractorId ? { name: `${name} ${subcontractorId}`, abn: null } : null,
+  });
+
+  it("groups gross and GST per subcontractor and counts what is unlinked separately", () => {
+    const report = tpar([paid("s1", 110_000, 10_000), paid("s1", 55_000, 5_000), paid("s2", 22_000, 2_000), paid(null, 33_000, 3_000)], 2026, [320], false);
+    expect(report.lines.map((l) => [l.subcontractorId, l.grossCents, l.gstCents, l.paymentCount])).toEqual([
+      ["s1", 165_000, 15_000, 2],
+      ["s2", 22_000, 2_000, 1],
+    ]);
+    expect(report.totalGrossCents).toBe(187_000);
+    expect(report.unlinkedCount).toBe(1);
+    expect(report.unlinkedCents).toBe(33_000);
+    expect(report.mappingVerified).toBe(false);
+    expect(report.accountCodes).toEqual([320]);
   });
 });

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSession } from "@/server/core/session";
-import { can, forbidden } from "@/server/core/permissions";
+import { can, canVerifyTax, forbidden } from "@/server/core/permissions";
 import { invalid } from "@/server/core/result";
 import type { ActionResult } from "@/shared/contracts/result";
 import { customAccountFromForm } from "./schema";
@@ -44,10 +44,12 @@ export async function updateAccount(
   return result;
 }
 
-/** Only a registered tax agent verifies a tax treatment. */
+/** Only a registered tax agent with `tax:verify` verifies a tax treatment, and only for their own firm. */
 export async function verifyAccountTreatment(accountId: string, formData: FormData): Promise<ActionResult> {
   const session = await requireSession();
-  if (!session.isTaxAgent) return { ok: false, error: "Only a registered tax agent can verify a tax treatment" };
+  if (!canVerifyTax(session)) {
+    return { ok: false, error: "Only a registered tax agent with verification rights can verify a tax treatment" };
+  }
 
   const note = String(formData.get("note") ?? "").trim().slice(0, 300) || null;
   const result = await service.verifyAccountTreatment(session.firmId, session.userId, accountId, note);

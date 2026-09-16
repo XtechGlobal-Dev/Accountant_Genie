@@ -20,6 +20,23 @@ export interface JobContext {
 
 export type JobHandler = (job: JobContext, report: StageReporter) => Promise<void>;
 
+/**
+ * A RECONCILE_CLIENT job's input is either absent (everything PENDING for the
+ * client) or a JSON array of transaction ids (a subset — the siblings of a
+ * recode, say). Anything else is treated as "everything", never as an id.
+ */
+export function parseTransactionIds(inputReference: string | null): string[] | undefined {
+  if (!inputReference || !inputReference.startsWith("[")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(inputReference);
+    if (!Array.isArray(parsed)) return undefined;
+    const ids = parsed.filter((v): v is string => typeof v === "string" && v.length > 0 && v.length <= 64);
+    return ids.length > 0 ? ids : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const HANDLERS = {
   IMPORT_STATEMENT: async (job, report) => {
     if (!job.inputReference) throw new Error("Import job has no import id");
@@ -27,8 +44,9 @@ export const HANDLERS = {
   },
   RECONCILE_CLIENT: async (job, report) => {
     if (!job.clientId) throw new Error("Reconcile job has no client");
-    await report("RECONCILING");
-    const stats = await runEngine(job.firmId, job.createdById, job.clientId);
+    const ids = parseTransactionIds(job.inputReference);
+    await report("RECONCILING", { message: ids ? `Re-coding ${ids.length} transactions` : "Coding everything not yet coded" });
+    const stats = await runEngine(job.firmId, job.createdById, job.clientId, ids);
     await report("COMPLETED", { message: JSON.stringify(stats) });
   },
   SYNC_BANK_FEED: async (job, report) => {

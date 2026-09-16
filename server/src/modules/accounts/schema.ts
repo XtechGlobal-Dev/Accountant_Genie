@@ -43,6 +43,8 @@ export const CustomAccountSchema = z
     description: z.string().trim().max(300).optional(),
     /** Empty = every client of the firm. */
     clientId: z.string().trim().max(64).optional(),
+    /** The row version the form was opened with; an edit against a newer row is refused. */
+    version: z.coerce.number().int().min(0).optional(),
   })
   .refine((v) => treatmentAllowedFor(v.type, v.gstTreatment), {
     path: ["gstTreatment"],
@@ -61,5 +63,6 @@ export function customAccountFromForm(form: FormData) {
     gstTreatment: form.get("gstTreatment"),
     description: text(form, "description"),
     clientId: text(form, "clientId"),
+    version: text(form, "version") || undefined,
   });
 }

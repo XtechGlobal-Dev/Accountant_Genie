@@ -42,7 +42,7 @@ interface Rule {
   reason: string;
 }
 
-const RULES: readonly Rule[] = [
+export const RULES: readonly Rule[] = [
   {
     name: "transfer",
     test: /\b(transfer|tfr|internal transfer|to savings|from savings|linked acc)\b/,

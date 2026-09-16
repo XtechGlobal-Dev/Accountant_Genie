@@ -15,9 +15,11 @@ import {
   setDeviceCookie,
 } from "@/server/core/trusted-device";
 import { consume, minutesLeft, reset } from "@/server/core/rate-limit";
+import { seedProposalsForFirm } from "@/server/modules/tax-rules/service";
 import type { ActionResult } from "@/shared/contracts/result";
 import type { TeamMember, TrustedDeviceRow } from "@/shared/contracts/settings";
 import type { OtpPurpose, UserRole } from "@/generated/prisma";
+import type { TaxAgentInput } from "./schema";
 import type { AuState, ProfessionalBody } from "@/generated/prisma";
 
 /**
@@ -338,8 +340,10 @@ export async function signUp(input: {
       entityType: "User",
       entityId: created.id,
       // The registration claim is audited because it grants the right to
-      // verify a tax rule. Marketing attribution is not: it is not a
-      // permission and does not belong in an accounting audit trail.
+      // verify a tax rule — for this firm only, which is why a self-declared
+      // registration at sign-up is acceptable: the owner is accountable for
+      // their own firm's books and can reach nobody else's. Marketing
+      // attribution is not audited: it is not a permission.
       after: {
         role: "OWNER",
         signUp: true,
@@ -348,6 +352,9 @@ export async function signUp(input: {
         professionalBody: input.professionalBody ?? null,
       },
     });
+    // Every firm starts with the catalogue's mapping proposals, pending its
+    // own advisor's sign-off. Nothing is applied until then.
+    await seedProposalsForFirm(tx, firm.id);
     return created;
   });
 
@@ -563,6 +570,50 @@ export async function inviteUser(
   });
 
   return { ok: true, id, temporaryPassword: mailIsConsoleOnly() ? password : null };
+}
+
+/**
+ * Grant or withdraw a colleague's tax-agent registration. Only someone who
+ * manages users does this, and the body and number are recorded with it, so
+ * the right to verify a tax rule is conferred by the firm and evidenced —
+ * never self-declared on a settings form. Both directions are audited.
+ */
+export async function setTaxAgent(
+  firmId: string,
+  actorId: string,
+  userId: string,
+  input: TaxAgentInput,
+): Promise<ActionResult> {
+  const user = await db.user.findFirst({
+    where: { id: userId, firmId },
+    select: { id: true, isTaxAgent: true, professionalBody: true, agentNumber: true },
+  });
+  if (!user) return { ok: false, error: "User not found" };
+
+  await db.$transaction(async (tx) => {
+    await tx.user.updateMany({
+      where: { id: user.id, firmId },
+      data: {
+        isTaxAgent: input.isTaxAgent,
+        professionalBody: input.isTaxAgent ? (input.professionalBody ?? null) : null,
+        agentNumber: input.isTaxAgent ? (input.agentNumber ?? null) : null,
+      },
+    });
+    await recordAudit(tx, {
+      firmId,
+      userId: actorId,
+      action: "USER_TAX_AGENT_CHANGED",
+      entityType: "User",
+      entityId: user.id,
+      before: { isTaxAgent: user.isTaxAgent, professionalBody: user.professionalBody, agentNumber: user.agentNumber },
+      after: {
+        isTaxAgent: input.isTaxAgent,
+        professionalBody: input.isTaxAgent ? (input.professionalBody ?? null) : null,
+        agentNumber: input.isTaxAgent ? (input.agentNumber ?? null) : null,
+      },
+    });
+  });
+  return { ok: true, id: user.id };
 }
 
 export async function changeRole(

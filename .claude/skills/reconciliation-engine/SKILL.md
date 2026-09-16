@@ -37,7 +37,7 @@ the fix is more rules, not a better prompt.
 
 These are unambiguous and must never reach the LLM:
 
-- Transfers between the client's own accounts → `877 Tracking Transfers`, `BAS_EXCLUDED`
+- Transfers between the client's own accounts → `977 Tracking Transfers`, `BAS_EXCLUDED`
 - ATO payments → `BAS_EXCLUDED`
 - Bank fees → `404`, `INPUT_TAXED`
 - Interest charged → `400`, `INPUT_TAXED`
@@ -93,7 +93,7 @@ Indicative bands, tunable:
 
 ## Abstention is a first-class outcome
 
-The engine is always allowed to answer **Unknown**. Route to account `999 Unknown` and flag for review.
+The engine is always allowed to answer **Unknown**. Route to account `0 Unknown` (the sentinel `CODE_UNKNOWN` in `server/src/au/coa.ts`; `1` is Suspense) and flag for review.
 
 This is better than a confident wrong classification, and it is never penalised in metrics. Cases that
 should abstain rather than guess: ambiguous merchant · unusual or very large amount · conflicting

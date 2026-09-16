@@ -24,7 +24,7 @@ export async function createBankAccount(
   const parsed = bankAccountFromForm(formData);
   if (!parsed.success) return invalid(parsed.error);
 
-  const account = await service.createAccount(firmId, clientId, parsed.data);
+  const account = await service.createAccount(firmId, session.userId, clientId, parsed.data);
   if (!account) return notFound("Client");
 
   revalidatePath(`/clients/${clientId}`);
@@ -43,7 +43,7 @@ export async function updateBankAccount(
   const parsed = bankAccountFromForm(formData);
   if (!parsed.success) return invalid(parsed.error);
 
-  const account = await service.updateAccount(firmId, bankAccountId, parsed.data);
+  const account = await service.updateAccount(firmId, session.userId, bankAccountId, parsed.data);
   if (!account) return notFound("Bank account");
 
   revalidatePath(`/clients/${account.clientId}`);

@@ -31,7 +31,7 @@ export default async function DepreciationPage({
   if (!client) notFound();
 
   const fy = fyFrom(query.fy);
-  const [schedule, thresholds] = await Promise.all([getDepreciationSchedule(firmId, client.id, fy), verifiedThresholds(fy)]);
+  const [schedule, thresholds] = await Promise.all([getDepreciationSchedule(firmId, client.id, fy), verifiedThresholds(firmId, fy)]);
   if (!schedule) notFound();
 
   return (
@@ -64,6 +64,14 @@ export default async function DepreciationPage({
             schedule uses the plain method only.
           </Alert>
         )}
+        {!thresholds.verified.methods ? (
+          <Alert tone="warning" title="Method rates not yet verified">
+            The schedule is using the statutory rates (prime cost 100% ÷ life, diminishing value 200% ÷
+            life for assets acquired after 10 May 2006). The registered tax advisor confirms them under
+            Settings → Tax rules → Depreciation method rates. REQUIRES_VERIFICATION before this schedule
+            is relied on.
+          </Alert>
+        ) : null}
       </div>
       {schedule.lines.length === 0 ? (
         <div className="flex flex-col items-center gap-3 px-5 py-10 text-center">

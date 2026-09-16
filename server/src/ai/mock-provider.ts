@@ -1,8 +1,12 @@
+import { buildContext, buildSubcontractorContext, hashInput } from "./prompt";
 import {
   sanitiseResult,
+  sanitiseSubcontractor,
   type AccountingAIProvider,
   type ClassificationInput,
   type ClassificationResponse,
+  type SubcontractorInput,
+  type SubcontractorResponse,
 } from "./types";
 
 /**
@@ -13,7 +17,9 @@ import {
  * and it makes AI-layer regressions reproducible.
  *
  * It abstains on anything it does not recognise, which is exactly the behaviour
- * the real provider is held to.
+ * the real provider is held to. Its prompt versions name no file on disk on
+ * purpose: they are stamped on lineage so a mock-coded row can never be
+ * mistaken for one a real model produced.
  */
 const KEYWORDS: Array<[RegExp, number, string]> = [
   [/\b(woolworths|coles|aldi|iga)\b/i, 482, "GST_ON_EXPENSES"],
@@ -69,7 +75,24 @@ export class MockProvider implements AccountingAIProvider {
 
     return {
       results,
-      meta: { provider: this.name, model: this.model, promptVersion: "mock-v1" },
+      meta: { provider: this.name, model: this.model, promptVersion: "mock-v1", inputHash: hashInput(buildContext(input)) },
+    };
+  }
+
+  /** Matches a payment to a register entry whose name appears in the narration; otherwise abstains. */
+  async identifySubcontractors(input: SubcontractorInput): Promise<SubcontractorResponse> {
+    const results = input.transactions.map((t) => {
+      const haystack = t.description.toLowerCase();
+      const known = input.known.find((k) => k.name.length >= 4 && haystack.includes(k.name.toLowerCase()));
+      return sanitiseSubcontractor(
+        known
+          ? { ref: t.ref, knownId: known.id, proposedName: null, confidence: 0.85, reason: `Narration names ${known.name}` }
+          : { ref: t.ref, knownId: null, proposedName: null, confidence: 0, reason: "No register entry named in the narration — abstaining" },
+      );
+    });
+    return {
+      results,
+      meta: { provider: this.name, model: this.model, promptVersion: "mock-subcontractor-v1", inputHash: hashInput(buildSubcontractorContext(input)) },
     };
   }
 }

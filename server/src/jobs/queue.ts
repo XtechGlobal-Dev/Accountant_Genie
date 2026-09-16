@@ -50,6 +50,45 @@ export const STAGES = [
 
 const BACKOFF_MS = [2_000, 10_000, 60_000];
 
+/**
+ * A job that failed on its input, not on the world: an empty file, a
+ * malformed statement. Retrying cannot help, so it goes straight to DEAD
+ * with a code that says so, instead of burning three attempts to learn the
+ * same thing. Still visible, still retryable by a person after they fix it.
+ */
+export class TerminalJobError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TerminalJobError";
+  }
+}
+
+/** A RUNNING job older than this with no completion is one whose process died. */
+const STALE_RUNNING_MS = 30 * 60_000;
+
+/**
+ * Jobs stuck RUNNING because the process that ran them was frozen or killed
+ * mid-flight. Nothing else would ever clear them: the runner refuses to
+ * start a RUNNING job, and retry accepts only DEAD or FAILED. Marked FAILED
+ * with a code that says why, so they show in the Activity Panel and a person
+ * can retry them. Called before a run and when the panel lists jobs.
+ */
+export async function reapStaleJobs(firmId?: string): Promise<number> {
+  const { count } = await db.job.updateMany({
+    where: {
+      status: "RUNNING",
+      startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) },
+      ...(firmId ? { firmId } : {}),
+    },
+    data: {
+      status: "FAILED",
+      errorCode: "STALE_RUNNING",
+      errorMessage: "The process running this job stopped before it finished. Retry it.",
+    },
+  });
+  return count;
+}
+
 export async function enqueue(input: EnqueueInput): Promise<{ id: string; existed: boolean }> {
   const existing = await db.job.findUnique({ where: { idempotencyKey: input.idempotencyKey }, select: { id: true } });
   if (existing) return { id: existing.id, existed: true };
@@ -80,7 +119,12 @@ async function dispatch(jobId: string, delayMs: number): Promise<void> {
   }
   // In-process: the same worker code, on this server, after the response.
   setTimeout(() => {
-    void runJob(jobId).catch((error) => console.error(`[jobs] ${jobId} crashed`, error));
+    void runJob(jobId).catch((error: unknown) => {
+      // The row is gone — a test purged its firm, or the job was removed —
+      // so there is nothing to run and nothing to report against.
+      if ((error as { code?: string })?.code === "P2025") return;
+      console.error(`[jobs] ${jobId} crashed`, error);
+    });
   }, delayMs).unref?.();
 }
 
@@ -109,6 +153,7 @@ async function report(jobId: string, stage: string, detail?: { processed?: numbe
 
 /** Run one job to completion. Called by the in-process runner and by the BullMQ worker. */
 export async function runJob(jobId: string): Promise<void> {
+  await reapStaleJobs();
   const job = await db.job.findUnique({ where: { id: jobId } });
   if (!job) return;
   if (job.status === "COMPLETED" || job.status === "RUNNING") return;
@@ -147,13 +192,16 @@ export async function runJob(jobId: string): Promise<void> {
   } catch (error) {
     const attempts = job.attempts + 1;
     const message = (error instanceof Error ? error.message : String(error)).slice(0, 500);
-    const dead = attempts >= job.maxAttempts;
-    await report(jobId, "FAILED", { message: dead ? `${message} — no retries left` : `${message} — retrying` });
+    const terminal = error instanceof TerminalJobError;
+    const dead = terminal || attempts >= job.maxAttempts;
+    await report(jobId, "FAILED", {
+      message: terminal ? `${message} — fix the input and retry` : dead ? `${message} — no retries left` : `${message} — retrying`,
+    });
     await db.job.update({
       where: { id: jobId },
       data: {
         status: dead ? "DEAD" : "FAILED",
-        errorCode: dead ? "RETRIES_EXHAUSTED" : "FAILED",
+        errorCode: terminal ? "VALIDATION" : dead ? "RETRIES_EXHAUSTED" : "FAILED",
         errorMessage: message,
         completedAt: dead ? new Date() : null,
       },
