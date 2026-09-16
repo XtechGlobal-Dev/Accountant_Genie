@@ -302,11 +302,35 @@ export type StartConnectionResult =
  * `renewConnectionId` re-authorises an existing arrangement instead of
  * creating a new one, which is how a consent nearing expiry is renewed.
  */
+/**
+ * Where Fiskil returns the client when the consent flow ends.
+ *
+ * Built per attempt from the request's own origin rather than read from a
+ * single environment variable, for two reasons: Fiskil rejects a session that
+ * carries no return URL at all, and one global URL would send every client to
+ * the same client's Banks page. `/clients/<id>/banks?feed=connected` is the
+ * page that then shows the new connection.
+ */
+function consentReturnUrls(
+  baseUrl: string | undefined,
+  clientId: string,
+): { redirectUri?: string; cancelUri?: string } {
+  if (!baseUrl) return {};
+  const page = `${baseUrl.replace(/\/+$/, "")}/clients/${clientId}/banks`;
+  return { redirectUri: `${page}?feed=connected`, cancelUri: `${page}?feed=cancelled` };
+}
+
 export async function startFeedConnection(
   firmId: string,
   userId: string | null,
   clientId: string,
-  input: { email: string; institutionId?: string | undefined; renewConnectionId?: string | undefined },
+  input: {
+    email: string;
+    institutionId?: string | undefined;
+    renewConnectionId?: string | undefined;
+    /** The request's origin, e.g. `http://localhost:3000`. */
+    baseUrl?: string | undefined;
+  },
 ): Promise<StartConnectionResult> {
   const provider = getFeedProvider();
   if (!provider) {
@@ -329,6 +353,7 @@ export async function startFeedConnection(
       externalUserId: provisioned.endUserId,
       institutionId: input.institutionId,
       arrangementId,
+      ...consentReturnUrls(input.baseUrl, clientId),
     });
   } catch (error) {
     if (error instanceof FiskilConfigError) return { ok: false, error: error.message };
@@ -723,6 +748,7 @@ export async function respondToFeedRequest(
 
   const started = await startFeedConnection(row.client.firmId, null, row.clientId, {
     email: row.email,
+    baseUrl,
   });
   if (!started.ok) {
     // The answer is recorded either way — the firm must not lose the fact that
