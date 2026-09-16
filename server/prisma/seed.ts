@@ -1,7 +1,7 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { randomBytes, scrypt } from "node:crypto";
 import { PrismaClient } from "../generated/prisma/client.js";
-import { AU_CHART_OF_ACCOUNTS } from "../src/au/coa.js";
+import { syncSystemAccounts } from "./accounts-sync.js";
 import { gstFromGross, naturalGross } from "../src/au/gst.js";
 import type { GstTreatment } from "../generated/prisma/client.js";
 
@@ -19,46 +19,6 @@ function hashPassword(password: string): Promise<string> {
       else resolve(`scrypt$16384$${salt}$${key.toString("base64url")}`);
     });
   });
-}
-
-async function seedSystemAccounts() {
-  // NOTE: the @@unique([code, firmId, clientId]) index does NOT protect system
-  // accounts, because Postgres treats NULLs as distinct — two rows with
-  // (200, NULL, NULL) both satisfy it. Phase 1 must add `NULLS NOT DISTINCT`
-  // via a raw migration. Until then the seed enforces uniqueness itself.
-  let created = 0;
-  let updated = 0;
-
-  for (const a of AU_CHART_OF_ACCOUNTS) {
-    const data = {
-      code: a.code,
-      name: a.name,
-      type: a.type,
-      gstTreatment: a.gstTreatment,
-      description: a.description ?? null,
-      isCashAtBank: a.isCashAtBank ?? false,
-      requiresVerification: a.requiresVerification ?? false,
-      taxNote: a.taxNote ?? null,
-      isSystem: true,
-      firmId: null,
-      clientId: null,
-    };
-
-    const existing = await db.account.findFirst({
-      where: { code: a.code, firmId: null, clientId: null },
-      select: { id: true },
-    });
-
-    if (existing) {
-      await db.account.update({ where: { id: existing.id }, data });
-      updated++;
-    } else {
-      await db.account.create({ data });
-      created++;
-    }
-  }
-
-  return { created, updated };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -98,11 +58,11 @@ const HORIZON_JOURNALS: SeedJournal[] = [
     description: "Opening balances FY2027",
     lines: [
       { code: 701, debit: 4_250_000 },
-      { code: 610, debit: 825_000 },
-      { code: 720, debit: 4_000_000, description: "Toyota HiLux at cost" },
-      { code: 840, credit: 1_200_000, description: "Equipment finance" },
+      { code: 727, debit: 825_000, description: "Work in progress at cost" },
+      { code: 725, debit: 4_000_000, description: "Stock on hand" },
+      { code: 850, credit: 1_200_000, description: "Director loan" },
       { code: 900, credit: 100_000 },
-      { code: 960, credit: 7_775_000 },
+      { code: 910, credit: 7_775_000 },
     ],
   },
   {
@@ -122,7 +82,7 @@ const HORIZON_JOURNALS: SeedJournal[] = [
     source: "MANUAL",
     description: "Workshop rent — July",
     lines: [
-      { code: 469, debit: 330_000 },
+      { code: 480, debit: 330_000 },
       { code: 701, credit: 330_000 },
     ],
   },
@@ -132,7 +92,7 @@ const HORIZON_JOURNALS: SeedJournal[] = [
     source: "MANUAL",
     description: "Account keeping fee",
     lines: [
-      { code: 404, debit: 1_500 },
+      { code: 320, debit: 1_500 },
       { code: 701, credit: 1_500 },
     ],
   },
@@ -143,8 +103,8 @@ const HORIZON_JOURNALS: SeedJournal[] = [
     reference: "PAY-08",
     description: "Wages — August",
     lines: [
-      { code: 477, debit: 480_000 },
-      { code: 825, credit: 110_000, description: "PAYG withheld" },
+      { code: 600, debit: 480_000 },
+      { code: 630, credit: 110_000, description: "PAYG withheld" },
       { code: 701, credit: 370_000 },
     ],
   },
@@ -154,7 +114,7 @@ const HORIZON_JOURNALS: SeedJournal[] = [
     source: "MANUAL",
     description: "Fuel — ute",
     lines: [
-      { code: 449, debit: 22_000 },
+      { code: 420, debit: 22_000 },
       { code: 701, credit: 22_000 },
     ],
   },
@@ -165,7 +125,7 @@ const HORIZON_JOURNALS: SeedJournal[] = [
     reference: "SUB-117",
     description: "Subcontractor — formwork",
     lines: [
-      { code: 320, debit: 275_000, subcontractorId: SUBCONTRACTOR_ID },
+      { code: 530, debit: 275_000, subcontractorId: SUBCONTRACTOR_ID },
       { code: 701, credit: 275_000 },
     ],
   },
@@ -263,8 +223,12 @@ async function main() {
   console.log(`  user     ${user.name} <${user.email}>  password: ${demoPassword}`);
 
   // -------------------------------------------------- Chart of accounts
-  const { created, updated } = await seedSystemAccounts();
-  console.log(`  accounts ${created} created, ${updated} updated`);
+  const { created, updated, deleted, deactivated } = await syncSystemAccounts((line) =>
+    console.log(line),
+  );
+  console.log(
+    `  accounts ${created} created, ${updated} updated, ${deleted} removed, ${deactivated} deactivated`,
+  );
 
   const flagged = await db.account.count({ where: { requiresVerification: true } });
   if (flagged > 0) {
