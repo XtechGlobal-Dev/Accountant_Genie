@@ -7,6 +7,9 @@ import { getJournalExport } from "@/server/modules/reports/service";
  * GET /clients/[id]/journals/export?format=xero|myob&fy=…&q=… — the period's
  * journals as another system imports them. Session, permission, service, file.
  */
+// Reads the session, so it can never be static.
+export const dynamic = "force-dynamic";
+
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await requireSession();
   if (!can(session, "report:export")) return new Response("Forbidden", { status: 403 });

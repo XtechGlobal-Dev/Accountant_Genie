@@ -7,6 +7,9 @@ import { failedRowsCsv } from "@/server/modules/ingest/service";
  * could not read, as CSV, to fix and re-upload. The import is scoped to the
  * firm inside the service; a foreign id is 404.
  */
+// Reads the session, so it can never be static.
+export const dynamic = "force-dynamic";
+
 export async function GET(_request: Request, context: { params: Promise<{ id: string; importId: string }> }) {
   const session = await requireSession();
   if (!can(session, "statement:upload")) return new Response("Forbidden", { status: 403 });

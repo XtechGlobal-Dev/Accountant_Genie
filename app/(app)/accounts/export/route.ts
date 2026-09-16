@@ -9,6 +9,9 @@ import { chartToCsv } from "@/server/modules/accounts/service";
  * file. The client ID is request-supplied and is scoped by the firm inside the
  * service's query, so a foreign ID simply yields the firm-wide chart.
  */
+// Reads the session, so it can never be static.
+export const dynamic = "force-dynamic";
+
 export async function GET(request: Request) {
   const session = await requireSession();
   if (!can(session, "report:export")) return new Response("Forbidden", { status: 403 });
