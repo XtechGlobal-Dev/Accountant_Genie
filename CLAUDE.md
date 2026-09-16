@@ -279,6 +279,7 @@ npm run db:seed      # seed AU chart of accounts + demo data
 npm run db:studio    # Prisma Studio
 npm run db:reset     # destructive: reset + reseed
 npm run db:purge-demo  # delete the seeded "Meridian Accounting" demo firm and everything under it; other firms untouched
+npm run db:backfill-tax-rules  # give every existing firm its tax rule proposals; idempotent, verifies nothing
 npm test             # unit tests (offline)
 npm run test:idor    # cross-tenant suite (needs a real database)
 npm run test:db      # ledger invariant + import idempotency against a real database
@@ -296,6 +297,15 @@ A local database that was built with `db push` before the migration history exis
 once with `prisma migrate resolve --applied <name>` for each migration already reflected in it, then
 `prisma migrate deploy` applies the rest. CI deploys every migration from scratch on every run, so a
 migration that only works on top of a pushed schema cannot merge.
+
+You find out you need this when `npm run dev` stops at "changes that cannot be executed": `db push`
+diffs the database against the schema with no history to consult, so it cannot move data, and a
+column becoming an enum or a required column arriving on a populated table is beyond it. The
+migration that carries the data step is usually already in `server/prisma/migrations`, unrun — so
+baseline and deploy rather than reaching for `--force-reset`, which destroys every row. `dev.mjs`
+prints this diagnosis when it happens. `20260916000008_hardening` in particular deletes every
+`TaxRuleVersion` when it makes them firm-scoped, and only sign-up re-seeds them, so run
+`npm run db:backfill-tax-rules` after deploying it in any environment that already had firms.
 
 `FISKIL_CLIENT_ID` / `FISKIL_CLIENT_SECRET` (in `server/.env`) enable live bank feeds.
 `FISKIL_WEBHOOK_SECRET` is separate and optional — it is issued only when a publicly

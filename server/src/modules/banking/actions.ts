@@ -89,6 +89,10 @@ export async function startFeedConnection(
     email: parsed.data.email,
     institutionId: parsed.data.institutionId,
     renewConnectionId: parsed.data.renewConnectionId,
+    // Fiskil refuses a session with no return URL, so this is required, not
+    // decorative. Taken from the request rather than configuration so it lands
+    // on THIS client's Banks page and needs no environment setup.
+    baseUrl: await baseUrl(),
   });
   if (result.ok) revalidatePath(`/clients/${clientId}/banks`);
   return result;

@@ -98,6 +98,13 @@ export interface FeedProvider {
     externalUserId: string;
     institutionId?: string | undefined;
     arrangementId?: string | undefined;
+    /**
+     * Where the consent flow returns the client. Fiskil REQUIRES both to be
+     * present — omitting the keys makes its consent page refuse the session
+     * with "cancel uri or redirect uri is not set", whichever flow is used.
+     */
+    redirectUri?: string | undefined;
+    cancelUri?: string | undefined;
   }): Promise<FeedAuthSession>;
 
   /** The provider's authoritative consent list. Local rows are reconciled to it. */
@@ -163,14 +170,23 @@ class FiskilProvider implements FeedProvider {
     externalUserId: string;
     institutionId?: string | undefined;
     arrangementId?: string | undefined;
+    redirectUri?: string | undefined;
+    cancelUri?: string | undefined;
   }): Promise<FeedAuthSession> {
-    const { redirectUri, cancelUri } = consentRedirects();
+    // Explicit per-attempt URLs win, then the environment override. Both keys
+    // are ALWAYS sent: Fiskil refuses a session that carries neither, with
+    // "cancel uri or redirect uri is not set" on its consent page. That is a
+    // dead end for the client and tells the accountant nothing, so the caller
+    // is expected to supply a real return URL rather than rely on config.
+    const configured = consentRedirects();
+    const redirectUri = input.redirectUri ?? configured.redirectUri ?? "";
+    const cancelUri = input.cancelUri ?? configured.cancelUri ?? "";
     const session = await fiskil.createAuthSession({
       end_user_id: input.externalUserId,
       ...(input.institutionId ? { institution_id: input.institutionId } : {}),
       ...(input.arrangementId ? { arrangement_id: input.arrangementId } : {}),
-      ...(redirectUri ? { redirect_uri: redirectUri } : {}),
-      ...(cancelUri ? { cancel_uri: cancelUri } : {}),
+      redirect_uri: redirectUri,
+      cancel_uri: cancelUri,
     });
     return {
       sessionId: session.session_id,
