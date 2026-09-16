@@ -38,6 +38,9 @@ jobs:
       - run: npm ci
       - run: npm run generate --workspace @ledgerly/server
       - run: npm run typecheck --workspace @ledgerly/server
+      # next-env.d.ts is git-ignored and carries the image and route type
+      # declarations the frontend typecheck needs; typegen writes it without a build.
+      - run: npx next typegen
       - run: npm run typecheck
       - run: npm test
 
