@@ -3,7 +3,7 @@
  * code them, and the shape of an import's outcome.
  */
 
-import type { ClassificationSource, GstTreatment, MatchType, TxStatus } from "@/shared/enums";
+import type { ClassificationSource, GstTreatment, MatchType, RiskLevel, TxStatus } from "@/shared/enums";
 
 export interface TransactionRow {
   id: string;
@@ -16,7 +16,7 @@ export interface TransactionRow {
   balanceCents: number | null;
   status: TxStatus;
   needsReview: boolean;
-  risk: string | null;
+  risk: RiskLevel | null;
   source: ClassificationSource | null;
   confidence: number | null;
   reasoning: string | null;
@@ -34,6 +34,10 @@ export interface TransactionRow {
   excludeReason: string | null;
   memoryRuleId: string | null;
   subcontractorId: string | null;
+  /** The loan facility a repayment settles, when linked. */
+  loanId: string | null;
+  /** Optimistic lock: sent back with a recode so a stale edit is refused. */
+  version: number;
 }
 
 /** Counts for the review screen's filter chips. */
@@ -66,6 +70,7 @@ export interface MemoryRuleRow {
   evidenceCount: number;
   lastUsedAt: Date | null;
   createdAt: Date;
+  version: number;
 }
 
 /** How a reconciliation run went. */
@@ -79,6 +84,12 @@ export interface ReconcileStats {
   autoCoded: number;
   /** Set when the AI tier failed or refused; the batch went to review. */
   aiFailure: string | null;
+  /** (memory + rules) ÷ processed. The skill's target is ≥ 0.60. */
+  preAiRatio: number;
+  /** Token usage across every AI call in the run — what the run cost to make. */
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; calls: number };
+  /** Things an operator should know: a missed pre-AI target, a cold cache. */
+  warnings: string[];
 }
 
 export interface ImportOutcome {

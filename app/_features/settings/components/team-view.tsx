@@ -7,7 +7,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { changeRole, inviteUser } from "@/server/modules/auth/actions";
+import { changeRole, inviteUser, setTaxAgentStatus } from "@/server/modules/auth/actions";
 import type { TeamMember } from "@/shared/contracts/settings";
 import type { UserRole } from "@/shared/enums";
 import { shortDate } from "@/shared/format";
@@ -35,8 +35,20 @@ export function TeamView({ members, meId, canManage }: { members: TeamMember[]; 
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [invite, setInvite] = useState(false);
+  const [agentFor, setAgentFor] = useState<TeamMember | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  async function withdrawTaxAgent(member: TeamMember) {
+    setBusy(member.id);
+    setError(null);
+    const form = new FormData();
+    form.set("isTaxAgent", "no");
+    const result = await setTaxAgentStatus(member.id, form);
+    if (!result.ok) setError(result.error);
+    startTransition(() => router.refresh());
+    setBusy(null);
+  }
 
   async function setRole(member: TeamMember, role: string) {
     setBusy(member.id);
@@ -89,6 +101,17 @@ export function TeamView({ members, meId, canManage }: { members: TeamMember[]; 
                     </span>
                     {member.isTaxAgent ? <Badge tone="accent">Tax agent</Badge> : null}
                     {member.mustChangePassword ? <Badge tone="warning">Temporary password</Badge> : null}
+                    {canManage ? (
+                      member.isTaxAgent ? (
+                        <Button variant="ghost" size="sm" disabled={busy === member.id} onClick={() => withdrawTaxAgent(member)}>
+                          Withdraw registration
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" disabled={busy === member.id} onClick={() => setAgentFor(member)}>
+                          Record tax agent registration
+                        </Button>
+                      )
+                    ) : null}
                   </span>
                 </td>
                 <td>
@@ -131,7 +154,79 @@ export function TeamView({ members, meId, canManage }: { members: TeamMember[]; 
       </div>
 
       {invite ? <InviteModal onClose={() => setInvite(false)} /> : null}
+      {agentFor ? <TaxAgentModal member={agentFor} onClose={() => setAgentFor(null)} /> : null}
     </div>
+  );
+}
+
+const PROFESSIONAL_BODY_OPTIONS = [
+  ["CA_ANZ", "Chartered Accountants ANZ"],
+  ["CPA_AUSTRALIA", "CPA Australia"],
+  ["IPA", "Institute of Public Accountants"],
+  ["ATMA", "Association of Taxation and Management Accountants"],
+  ["TPB", "Tax Practitioners Board (direct)"],
+  ["NTAA", "National Tax & Accountants' Association"],
+  ["OTHER", "Other"],
+] as const;
+
+/**
+ * Recording a colleague's registration is what confers the right to verify
+ * tax rules and treatments for this firm. The body and number are required
+ * so the grant is evidenced, and the change is audited either way.
+ */
+function TaxAgentModal({ member, onClose }: { member: TeamMember; onClose: () => void }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [field, setField] = useState<string | null>(null);
+
+  function submit(formData: FormData) {
+    setError(null);
+    setField(null);
+    formData.set("isTaxAgent", "yes");
+    startTransition(async () => {
+      const result = await setTaxAgentStatus(member.id, formData);
+      if (result.ok) {
+        onClose();
+        router.refresh();
+      } else {
+        setError(result.error);
+        setField(result.field ?? null);
+      }
+    });
+  }
+  const errorFor = (name: string) => (field === name ? (error ?? undefined) : undefined);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Record registration for ${member.name}`}
+      description="A registered tax agent may verify this firm's tax rules and account treatments. Enter the body and number their registration is held with."
+    >
+      <form onSubmit={submitWith(submit)}>
+        <div className="flex flex-col gap-4 px-5 py-5">
+          {error && !field ? <Alert tone="negative">{error}</Alert> : null}
+          <Select label="Registered with" name="professionalBody" defaultValue="" required error={errorFor("professionalBody")}>
+            <option value="">Select a body</option>
+            {PROFESSIONAL_BODY_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+          <Field label="Registration number" name="agentNumber" required inputMode="numeric" error={errorFor("agentNumber")} />
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={onClose} disabled={pending}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={pending}>
+            {pending ? "Saving…" : "Record registration"}
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 }
 

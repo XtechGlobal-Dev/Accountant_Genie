@@ -62,13 +62,15 @@ export interface ClientDetail {
   gstBasis: GstBasis;
   basFrequency: BasFrequency;
   /** Company only. */
-  incomeTaxRate: number | null;
+  incomeTaxRatePercent: number | null;
   /** Unit trust only. */
   totalUnits: number | null;
   /** Unit trust only. Integer cents. */
   unitValueCents: number | null;
   createdAt: Date;
   hasLogo: boolean;
+  /** Optimistic lock; the edit form sends it back so a stale save is refused. */
+  version: number;
 }
 
 export interface ClientNote {

@@ -25,7 +25,12 @@ import { normaliseAccount, normaliseTransaction } from "../src/modules/banking/f
 import type { FiskilTransaction } from "../src/modules/banking/fiskil/types";
 import { FiskilApiError, FiskilConfigError } from "../src/modules/banking/fiskil/errors";
 
-process.loadEnvFile(".env");
+// The environment may already be set (CI, a host): a missing .env is not an error.
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // .env is absent — the environment is expected to provide the variables.
+}
 
 const wantTransactions = process.argv.includes("--transactions");
 

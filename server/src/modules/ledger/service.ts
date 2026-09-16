@@ -5,6 +5,7 @@ import { recordAudit } from "@/server/core/audit";
 import type { GstTreatment } from "@/shared/enums";
 import { gstFromGross, naturalGross } from "@/server/au/gst";
 import { financialYearOf, financialYearRange } from "@/server/au/fy";
+import { GST_RULES_VERSION } from "@/server/modules/tax-rules/catalogue";
 import * as clients from "@/server/modules/clients/repository";
 import * as subcontractors from "@/server/modules/subcontractors/repository";
 import type { ActionResult } from "@/shared/contracts/result";
@@ -185,6 +186,9 @@ export async function postJournal(
       source: input.source,
       totalCents: totals.debitCents,
       postedById: userId,
+      // The GST regime the lines were computed under, so the entry can name
+      // the rule that produced its figures long after the code has moved on.
+      rulesVersion: GST_RULES_VERSION,
       lines: { create: lines },
     });
     await recordAudit(tx, {
@@ -218,6 +222,16 @@ export async function postJournal(
 /* Posting from a reconciled bank transaction                                 */
 /* -------------------------------------------------------------------------- */
 
+/** One side of a bank posting: an account, how much of the amount, and its treatment. */
+export interface BankAllocation {
+  accountId: string;
+  /** Magnitude, never signed. The allocations of one posting sum to the amount. */
+  cents: number;
+  gstTreatment: GstTreatment;
+  subcontractorId?: string | null | undefined;
+  description?: string | null | undefined;
+}
+
 export interface BankPosting {
   clientId: string;
   date: Date;
@@ -225,22 +239,27 @@ export interface BankPosting {
   reference?: string | null | undefined;
   /** The ledger account that stands for the bank account (Cash at Bank, Credit Card). */
   bankLedgerAccountId: string;
-  /** The account the transaction was coded to. */
-  accountId: string;
   /** Signed: negative is money out of the bank. */
   amountCents: number;
-  gstTreatment: GstTreatment;
   gstRegistered: boolean;
-  subcontractorId?: string | null | undefined;
+  /**
+   * Where the amount goes. One allocation for an ordinary coding; two for a
+   * loan repayment split into principal and interest. Their cents sum to
+   * |amountCents| or the posting is refused before anything is written.
+   */
+  allocations: readonly BankAllocation[];
   /** The bank transaction being posted, for lineage. */
   bankTransactionId: string;
 }
 
 /**
  * Post the balanced entry a reconciled, human-accepted bank transaction
- * produces: the coded account against the bank account, GST split out. Runs
- * on the caller's transaction so the transaction's status, the entry and the
- * audit row commit together or not at all.
+ * produces: the coded account(s) against the bank account, GST split out per
+ * allocation. Runs on the caller's transaction so the transaction's status,
+ * the entry and the audit row commit together or not at all.
+ *
+ * Every line carries `bankTransactionId`, so a BAS figure walks back to the
+ * exact bank row even when an entry has more than one coded line.
  *
  * The AI never reaches this. Only a person's acceptance does.
  */
@@ -252,12 +271,33 @@ export async function postBankTransactionInTx(
 ): Promise<string> {
   const magnitude = Math.abs(posting.amountCents);
   if (magnitude === 0) throw new Error("A zero-value transaction cannot be posted");
+  if (posting.allocations.length === 0) throw new Error("A bank posting needs at least one allocation");
+  const allocated = posting.allocations.reduce((sum, a) => sum + a.cents, 0);
+  if (allocated !== magnitude) {
+    throw new Error(`Allocations (${allocated}) do not sum to the transaction amount (${magnitude})`);
+  }
+  if (posting.allocations.some((a) => !Number.isInteger(a.cents) || a.cents < 0)) {
+    throw new Error("An allocation must be a non-negative whole number of cents");
+  }
   const moneyOut = posting.amountCents < 0;
 
-  const codedDebit = moneyOut ? magnitude : 0;
-  const codedCredit = moneyOut ? 0 : magnitude;
-  const gross = naturalGross(posting.gstTreatment, codedDebit, codedCredit);
-  const gstCents = posting.gstRegistered ? gstFromGross(gross, posting.gstTreatment) : 0;
+  const codedLines = posting.allocations
+    .filter((a) => a.cents > 0)
+    .map((a) => {
+      const debitCents = moneyOut ? a.cents : 0;
+      const creditCents = moneyOut ? 0 : a.cents;
+      const gross = naturalGross(a.gstTreatment, debitCents, creditCents);
+      return {
+        accountId: a.accountId,
+        description: a.description ?? null,
+        debitCents,
+        creditCents,
+        gstCents: posting.gstRegistered ? gstFromGross(gross, a.gstTreatment) : 0,
+        gstTreatment: a.gstTreatment,
+        subcontractorId: a.subcontractorId ?? null,
+        bankTransactionId: posting.bankTransactionId,
+      };
+    });
 
   const entry = await repo.createEntry(tx, {
     clientId: posting.clientId,
@@ -267,17 +307,10 @@ export async function postBankTransactionInTx(
     source: "BANK",
     totalCents: magnitude,
     postedById: userId,
+    rulesVersion: GST_RULES_VERSION,
     lines: {
       create: [
-        {
-          accountId: posting.accountId,
-          description: null,
-          debitCents: codedDebit,
-          creditCents: codedCredit,
-          gstCents,
-          gstTreatment: posting.gstTreatment,
-          subcontractorId: posting.subcontractorId ?? null,
-        },
+        ...codedLines,
         {
           accountId: posting.bankLedgerAccountId,
           description: null,
@@ -285,6 +318,7 @@ export async function postBankTransactionInTx(
           creditCents: moneyOut ? magnitude : 0,
           gstCents: 0,
           gstTreatment: "BAS_EXCLUDED",
+          bankTransactionId: posting.bankTransactionId,
         },
       ],
     },
@@ -302,9 +336,14 @@ export async function postBankTransactionInTx(
       bankTransactionId: posting.bankTransactionId,
       date: posting.date.toISOString(),
       totalCents: magnitude,
-      accountId: posting.accountId,
-      gstTreatment: posting.gstTreatment,
-      gstCents,
+      rulesVersion: GST_RULES_VERSION,
+      lines: codedLines.map((line) => ({
+        accountId: line.accountId,
+        debitCents: line.debitCents,
+        creditCents: line.creditCents,
+        gstTreatment: line.gstTreatment,
+        gstCents: line.gstCents,
+      })),
     },
   });
 
@@ -324,6 +363,7 @@ export function reversalLines(
     gstCents: number;
     gstTreatment: GstTreatment | null;
     subcontractorId?: string | null;
+    bankTransactionId?: string | null;
   }>,
 ) {
   return lines.map((line) => ({
@@ -334,6 +374,8 @@ export function reversalLines(
     gstCents: -line.gstCents,
     gstTreatment: line.gstTreatment,
     subcontractorId: line.subcontractorId ?? null,
+    // The reversal is part of the same transaction's story.
+    bankTransactionId: line.bankTransactionId ?? null,
   }));
 }
 
@@ -361,6 +403,16 @@ export async function reverseJournal(
       error: "This journal is itself a reversal. Post a new journal instead of reversing it.",
     };
   }
+  // An entry posted from a bank transaction is undone by reopening that
+  // transaction, which reverses the entry AND puts the row back in the review
+  // queue. Reversing it here would leave the transaction "accepted" against
+  // a cancelled journal — two records telling different stories.
+  if (original.source === "BANK" && original.transactions.some((t) => t.status === "REVIEWED")) {
+    return {
+      ok: false,
+      error: "This journal was posted from a bank transaction. Reopen the transaction on the review screen instead; that reverses this entry and lets it be recoded.",
+    };
+  }
   if (input.date < original.date) {
     return {
       ok: false,
@@ -381,6 +433,7 @@ export async function reverseJournal(
       totalCents: original.totalCents,
       reversesId: original.id,
       postedById: userId,
+      rulesVersion: GST_RULES_VERSION,
       lines: { create: lines },
     });
     await recordAudit(tx, {

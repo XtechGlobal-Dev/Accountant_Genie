@@ -12,7 +12,10 @@ import * as reconcile from "@/server/modules/reconcile/service";
 import { resolvePeriod } from "@/server/modules/reports/period";
 import * as reports from "@/server/modules/reports/service";
 import * as subcontractors from "@/server/modules/subcontractors/service";
-import { listJobs, findOwnedJob } from "@/server/jobs/service";
+import * as taxRules from "@/server/modules/tax-rules/service";
+import * as ingest from "@/server/modules/ingest/service";
+import { eventsSince, listJobs, findOwnedJob } from "@/server/jobs/service";
+import { purgeFirms } from "../helpers/purge-firm";
 
 /**
  * Tenant isolation, proven rather than assumed.
@@ -23,7 +26,11 @@ import { listJobs, findOwnedJob } from "@/server/jobs/service";
  * is not finished.
  */
 
-process.loadEnvFile?.(".env");
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // Absent in CI — the environment provides DATABASE_URL.
+}
 
 interface Fixture {
   firmId: string;
@@ -146,15 +153,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const firmIds = [a.firmId, b.firmId];
-
-  // JournalLine.account is onDelete: Restrict on purpose — a deleted account must
-  // not be able to rewrite an already-prepared BAS. So the ledger has to come out
-  // from the leaves inward before the firms themselves can go.
-  const where = { client: { firmId: { in: firmIds } } };
-  await db.journalLine.deleteMany({ where: { entry: where } });
-  await db.journalEntry.deleteMany({ where });
-  await db.firm.deleteMany({ where: { id: { in: firmIds } } });
+  // Accounting parents are onDelete: Restrict, so the throwaway firms come out
+  // from the leaves inward. The order lives in one helper.
+  await purgeFirms([a.firmId, b.firmId]);
   await db.$disconnect();
 });
 
@@ -221,10 +222,20 @@ describe("Firm A cannot read Firm B", () => {
 
 describe("Firm A cannot write to Firm B", () => {
   it("clients and partners", async () => {
-    expect(await clients.setClientArchived(a.firmId, b.clientId, true)).toBe(false);
-    expect(await clients.addClientNote(a.firmId, b.clientId, { title: "x", body: "y" })).toBe(false);
-    expect(await clients.removeClientLogo(a.firmId, b.clientId)).toBe(false);
-    expect(await clients.setClientLogo(a.firmId, b.clientId, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0]))).toMatchObject(notFound);
+    expect(await clients.setClientArchived(a.firmId, a.userId, b.clientId, true)).toBe(false);
+    expect(await clients.addClientNote(a.firmId, a.userId, b.clientId, { title: "x", body: "y" })).toBe(false);
+    expect(await clients.removeClientLogo(a.firmId, a.userId, b.clientId)).toBe(false);
+    expect(await clients.setClientLogo(a.firmId, a.userId, b.clientId, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0]))).toMatchObject(notFound);
+    expect(
+      await clients.updateClient(a.firmId, a.userId, b.clientId, {
+        businessName: "Hijack",
+        abn: "51824753556",
+        entityType: "COMPANY",
+        gstRegistered: true,
+        gstBasis: "CASH",
+        basFrequency: "QUARTERLY",
+      } as never),
+    ).toBe("not_found");
     expect(await clients.savePartners(a.firmId, a.userId, b.clientId, { partners: [{ name: "P", shareBasisPoints: 10_000 }] })).toMatchObject(notFound);
     expect(
       await clients.saveTrustDetails(a.firmId, a.userId, b.clientId, {
@@ -235,19 +246,72 @@ describe("Firm A cannot write to Firm B", () => {
   });
 
   it("bank accounts and feeds", async () => {
-    expect(await banking.updateAccount(a.firmId, b.bankAccountId, { name: "x", kind: "BANK", accountMask: "", isCashAtBank: false })).toBeNull();
-    expect(await banking.createAccount(a.firmId, b.clientId, { name: "x", kind: "BANK", accountMask: "", isCashAtBank: false })).toBeNull();
+    expect(await banking.updateAccount(a.firmId, a.userId, b.bankAccountId, { name: "x", kind: "BANK", accountMask: "", isCashAtBank: false })).toBeNull();
+    expect(await banking.createAccount(a.firmId, a.userId, b.clientId, { name: "x", kind: "BANK", accountMask: "", isCashAtBank: false })).toBeNull();
     expect(await feeds.cancelFeedRequest(a.firmId, a.userId, b.feedRequestId)).toMatchObject(notFound);
   });
 
   it("transactions and memory", async () => {
     expect(await reconcile.recodeTransaction(a.firmId, a.userId, b.transactionId, { accountId: a.accountId, remember: "NONE", matchType: "EXACT" })).toMatchObject(notFound);
+    // Every resource a recode names is ownership-checked, not just the transaction:
+    // Firm B's subcontractor and loan cannot be linked to Firm A's own transaction.
+    expect(
+      await reconcile.recodeTransaction(a.firmId, a.userId, a.transactionId, { accountId: a.accountId, remember: "NONE", matchType: "EXACT", subcontractorId: b.subcontractorId }),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/subcontractor not found/i) });
+    expect(
+      await reconcile.recodeTransaction(a.firmId, a.userId, a.transactionId, { accountId: a.accountId, remember: "NONE", matchType: "EXACT", loanId: b.loanId }),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/loan not found/i) });
     expect((await reconcile.acceptTransactions(a.firmId, a.userId, [b.transactionId])).skipped[0]?.reason).toBe("Not found");
     expect(await reconcile.reopenTransaction(a.firmId, a.userId, b.transactionId)).toMatchObject(notFound);
     expect(await reconcile.excludeTransaction(a.firmId, a.userId, b.transactionId, { reason: "x" })).toMatchObject(notFound);
     expect(await reconcile.updateMemoryRule(a.firmId, a.userId, b.memoryRuleId, { pattern: "zz", matchType: "EXACT", accountId: a.accountId, gstTreatment: "GST_ON_EXPENSES" })).toMatchObject(notFound);
     expect(await reconcile.deleteMemoryRule(a.firmId, a.userId, b.memoryRuleId)).toMatchObject(notFound);
     expect(await reconcile.runReconciliation(a.firmId, a.userId, b.clientId)).toBeNull();
+    expect(await reconcile.queueReconciliation(a.firmId, a.userId, b.clientId)).toBeNull();
+  });
+
+  it("tax rules and account verification stay inside the firm", async () => {
+    // Firm B proposes a rule; Firm A's agent cannot see it, verify it, or read it as current.
+    const proposed = await taxRules.proposeVersion(b.firmId, b.userId, {
+      code: "CAR_LIMIT",
+      valueCents: 6_900_000,
+      valueText: null,
+      effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
+      note: null,
+    });
+    expect(proposed.ok).toBe(true);
+    const versionId = proposed.ok ? proposed.id! : "";
+    expect(await taxRules.verifyVersion(a.firmId, a.userId, versionId, null)).toMatchObject({ ok: false, error: expect.stringMatching(/not found/i) });
+    expect((await taxRules.listTaxRules(a.firmId)).flatMap((r) => r.versions.map((v) => v.id))).not.toContain(versionId);
+    expect(await taxRules.verifyVersion(b.firmId, b.userId, versionId, null)).toMatchObject({ ok: true });
+    expect(await taxRules.currentRule(a.firmId, "CAR_LIMIT", new Date("2026-12-01T00:00:00.000Z"))).toBeNull();
+    expect((await taxRules.currentRule(b.firmId, "CAR_LIMIT", new Date("2026-12-01T00:00:00.000Z")))?.valueCents).toBe(6_900_000);
+
+    // Firm A cannot verify Firm B's custom account at all.
+    expect(await accounts.verifyAccountTreatment(a.firmId, a.userId, b.accountId, null)).toMatchObject(notFound);
+
+    // A shared system account flagged for verification: Firm A's sign-off is a
+    // per-firm row. The shared account is untouched and Firm B still sees the flag.
+    const flagged = await db.account.findFirst({ where: { firmId: null, clientId: null, requiresVerification: true }, select: { id: true } });
+    expect(flagged).not.toBeNull();
+    expect(await accounts.verifyAccountTreatment(a.firmId, a.userId, flagged!.id, "confirmed for firm A")).toMatchObject({ ok: true });
+    const shared = await db.account.findUnique({ where: { id: flagged!.id }, select: { requiresVerification: true } });
+    expect(shared?.requiresVerification).toBe(true);
+    const seenByB = (await accounts.getChartOfAccounts(b.firmId)).groups.flatMap((g) => g.rows).find((r) => r.id === flagged!.id);
+    expect(seenByB?.requiresVerification).toBe(true);
+    const seenByA = (await accounts.getChartOfAccounts(a.firmId)).groups.flatMap((g) => g.rows).find((r) => r.id === flagged!.id);
+    expect(seenByA?.requiresVerification).toBe(false);
+  });
+
+  it("prepared BAS statements, imports and job events", async () => {
+    expect(await reports.listBasStatements(a.firmId, b.clientId)).toBeNull();
+    expect(await reports.prepareBasStatement(a.firmId, a.userId, b.clientId, period)).toMatchObject(notFound);
+    expect(await reports.getTransactionsReport(a.firmId, b.clientId, period)).toBeNull();
+    expect(await reports.getTrialBalance(a.firmId, b.clientId, period)).toBeNull();
+    expect(await reports.getGeneralLedger(a.firmId, b.clientId, period)).toBeNull();
+    expect(await ingest.getImportOutcome(a.firmId, "no-such-import")).toBeNull();
+    expect(await ingest.failedRowsCsv(a.firmId, "no-such-import")).toBeNull();
+    expect(await eventsSince(a.firmId, b.jobId, null)).toEqual([]);
   });
 
   it("ledger — including a foreign account on an own client", async () => {

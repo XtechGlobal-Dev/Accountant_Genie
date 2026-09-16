@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/server/core/session";
+import { canVerifyTax } from "@/server/core/permissions";
 import { getChartOfAccounts } from "@/server/modules/accounts/service";
 import { getClientHeader, listClientOptions } from "@/server/modules/clients/service";
 import { ChartOfAccountsView } from "@/features/accounts/components/chart-of-accounts-view";
@@ -34,7 +35,7 @@ export default async function ClientAccountsPage({
       chart={chart}
       clients={clients}
       scope={{ id: client.id, name: client.businessName }}
-      isTaxAgent={session.isTaxAgent}
+      isTaxAgent={canVerifyTax(session)}
     />
   );
 }

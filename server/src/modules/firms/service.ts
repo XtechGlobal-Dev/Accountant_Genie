@@ -7,7 +7,7 @@ import type { DashboardView } from "@/shared/contracts/dashboard";
 import type { SettingsView } from "@/shared/contracts/settings";
 import type { ActionResult } from "@/shared/contracts/result";
 import type { AuditRow } from "@/shared/contracts/settings";
-import { planAllowance } from "@/server/modules/billing/service";
+import { planAllowance, usedThisPlanYear } from "@/server/modules/billing/service";
 import { planByCode } from "@/server/modules/billing/plans";
 import { currentFinancialYear, financialYearRange } from "@/server/au/fy";
 import type { ClientQueueRow, MonthlyActivity } from "@/shared/contracts/dashboard";
@@ -31,7 +31,7 @@ export async function getWorkspace(
   const [firm, clientList, used, allowance, attention] = await Promise.all([
     repo.findFirmName(firmId),
     clients.listClientOptions(firmId),
-    banking.countTransactionsForFirm(firmId),
+    usedThisPlanYear(firmId),
     planAllowance(firmId),
     banking.countTransactionsForFirm(firmId, "CLASSIFIED"),
   ]);

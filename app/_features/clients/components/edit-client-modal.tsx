@@ -88,6 +88,10 @@ function EditClientModal({
       size="lg"
     >
       <form onSubmit={submitWith(handleSubmit)}>
+        {/* The row version this form opened with. A colleague's save in the
+            meantime makes this stale, and the server refuses the edit rather
+            than overwriting theirs. */}
+        <input type="hidden" name="version" value={client.version} />
         <div className="flex flex-col gap-5 px-5 py-5 sm:px-6">
           {error && !field ? <Alert tone="negative">{error}</Alert> : null}
 
@@ -223,12 +227,12 @@ function EditClientModal({
             <div className="grid gap-4 border-t border-rule pt-5 sm:grid-cols-2">
               <Field
                 label="Income tax rate (%)"
-                name="incomeTaxRate"
+                name="incomeTaxRatePercent"
                 type="number"
                 icon="percent"
-                defaultValue={String(client.incomeTaxRate ?? 25)}
+                defaultValue={String(client.incomeTaxRatePercent ?? 25)}
                 hint="25% is the base rate entity company rate."
-                error={errorFor("incomeTaxRate")}
+                error={errorFor("incomeTaxRatePercent")}
               />
             </div>
           ) : null}

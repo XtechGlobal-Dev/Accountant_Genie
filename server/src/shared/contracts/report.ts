@@ -53,7 +53,92 @@ export interface SimpleBas {
   netGstCents: number;
   /** Lines whose tax treatment was never resolved. A BAS with any is not ready. */
   unresolvedCount: number;
+  /** Input-taxed lines left out of G1/G11 because the rule that includes them is not verified. */
+  inputTaxedOmittedCount: number;
   lineCount: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Transactions report                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** One account's postings from bank transactions in the period. */
+export interface TransactionsReportLine {
+  accountId: string;
+  code: number;
+  name: string;
+  type: import("@/shared/enums").AccountType;
+  /** Journal lines — one per accepted bank transaction. */
+  count: number;
+  /** Gross from the account's natural side, GST inclusive. */
+  grossCents: number;
+  gstCents: number;
+  /** Gross less GST. */
+  netCents: number;
+  contributors: BasContributor[];
+}
+
+export interface TransactionsReport {
+  accounts: TransactionsReportLine[];
+  totalCount: number;
+  totalGrossCents: number;
+  totalGstCents: number;
+  totalNetCents: number;
+  /** Bank-sourced journal lines the report was built from, bank side excluded. */
+  lineCount: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Prepared BAS statements                                                    */
+/* -------------------------------------------------------------------------- */
+
+export type BasStatementStatusKind = "DRAFT" | "FINAL";
+
+/** One label as it was prepared: what was computed, what was adjusted, what stands. */
+export interface BasStatementLineView {
+  label: BasLabelKey;
+  title: string;
+  calculatedCents: number;
+  adjustmentCents: number;
+  finalCents: number;
+  note: string | null;
+}
+
+export interface BasStatementView {
+  id: string;
+  clientId: string;
+  periodLabel: string;
+  periodStart: Date;
+  periodEnd: Date;
+  fy: number;
+  quarter: number | null;
+  month: number | null;
+  status: BasStatementStatusKind;
+  gstRegistered: boolean;
+  mappingVerified: boolean;
+  /** { ruleCode: taxRuleVersionId | null } as consulted when prepared. */
+  taxRuleVersions: Record<string, string | null>;
+  lineCount: number;
+  unresolvedCount: number;
+  preparedBy: string | null;
+  finalisedBy: string | null;
+  finalisedAt: Date | null;
+  version: number;
+  createdAt: Date;
+  lines: BasStatementLineView[];
+  /** 1A − 1B on the final figures. */
+  netGstCents: number;
+}
+
+/** A prepared statement as the BAS page lists them. */
+export interface BasStatementRow {
+  id: string;
+  periodLabel: string;
+  status: BasStatementStatusKind;
+  netGstCents: number;
+  preparedBy: string | null;
+  createdAt: Date;
+  finalisedAt: Date | null;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,4 +1,5 @@
 import { financialYearOf, financialYearRange } from "@/server/au/fy";
+import { STATUTORY_DEPRECIATION_RATES, type DepreciationMethodRates } from "@/server/modules/tax-rules/catalogue";
 import type { DepreciationLine, DepreciationSchedule } from "@/shared/contracts/register";
 import type { DepreciationMethod } from "@/shared/enums";
 
@@ -39,6 +40,12 @@ export interface VerifiedThresholds {
   instantWriteOffCents?: number | null;
   /** The maximum depreciable cost of a car. */
   carLimitCents?: number | null;
+  /**
+   * The method rates (100% / 200% of effective life) from the verified
+   * DEPRECIATION_METHODS rule. Absent means the statutory rates, and the
+   * caller says so on the report.
+   */
+  rates?: DepreciationMethodRates | undefined;
 }
 
 const DAY = 86_400_000;
@@ -89,7 +96,12 @@ function declineFor(
   }
   const fraction = daysHeldIn(asset, fy) / daysInYear(fy);
   const base = asset.method === "PRIME_COST" ? cost : openingCents;
-  const ratePerYear = (asset.method === "PRIME_COST" ? 12 : 24) / asset.effectiveLifeMonths;
+  // Rate per year = percent ÷ 100 ÷ (life in years) = percent ÷ 100 × 12 ÷ life in months.
+  // The percentages come from the verified DEPRECIATION_METHODS rule, or the
+  // statutory figures when none is verified — the report says which.
+  const rates = thresholds.rates ?? STATUTORY_DEPRECIATION_RATES;
+  const percent = asset.method === "PRIME_COST" ? rates.primeCostPercent : rates.diminishingValuePercent;
+  const ratePerYear = (percent / 100) * (12 / asset.effectiveLifeMonths);
   return Math.min(openingCents, roundCents(base * fraction * ratePerYear));
 }
 

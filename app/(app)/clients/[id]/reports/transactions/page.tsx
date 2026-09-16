@@ -7,13 +7,22 @@ import { asAtOf, getTransactionsReport } from "@/server/modules/reports/service"
 import { resolvePeriod } from "@/server/modules/reports/period";
 import { recentFinancialYears } from "@/server/au/fy";
 import { shortDate } from "@/shared/format";
-import { GST_TREATMENT_LABELS } from "@/shared/labels";
+import { ACCOUNT_TYPE_LABELS } from "@/shared/labels";
 import { PeriodPicker } from "@/features/reports/components/period-picker";
 import { ReportFrame } from "@/features/reports/components/report-frame";
-import { Badge, Money } from "@/ui/primitives";
+import { Icon } from "@/ui/icons";
+import { Money } from "@/ui/primitives";
 
 export const metadata: Metadata = { title: "Transactions Report" };
 
+/**
+ * Count, gross, GST and net per account from bank transactions in the period.
+ *
+ * Built from journal lines like every other report: a bank row that has not
+ * been accepted has no journal and is not here, so these figures agree with
+ * the P&L and the BAS for the same period. To see uncoded or unaccepted rows,
+ * use the client's Transactions review screen.
+ */
 export default async function TransactionsReportPage({
   params,
   searchParams,
@@ -28,13 +37,8 @@ export default async function TransactionsReportPage({
   if (!client) notFound();
 
   const period = resolvePeriod(query);
-  const rows = await getTransactionsReport(firmId, client.id, period);
-  if (!rows) notFound();
-
-  const included = rows.filter((row) => !row.excludedAt);
-  const totalIn = included.filter((r) => r.amountCents > 0).reduce((s, r) => s + r.amountCents, 0);
-  const totalOut = included.filter((r) => r.amountCents < 0).reduce((s, r) => s + r.amountCents, 0);
-  const totalGst = included.reduce((s, r) => s + r.gstCents, 0);
+  const report = await getTransactionsReport(firmId, client.id, period);
+  if (!report) notFound();
 
   return (
     <ReportFrame
@@ -47,83 +51,81 @@ export default async function TransactionsReportPage({
           <span className="figure">
             {shortDate(period.start)} — {shortDate(asAtOf(period))}
           </span>{" "}
-          · every bank transaction in the period and how it was coded
+          · accepted bank transactions, summed per account
         </>
       }
-      footnote="Amounts are as they appeared on the statement. GST is what the engine computed from the tax code; a dash means none applies. Excluded rows are listed but left out of the totals."
+      footnote={`Built from ${report.lineCount.toLocaleString("en-AU")} posted journal lines; the bank side of each posting is left out. Gross is GST inclusive from the account's natural side; net is gross less the GST the posting engine computed. Transactions not yet accepted have no journal and are not counted — review them on the Transactions screen.`}
     >
-      {rows.length === 0 ? (
-        <p className="px-5 py-10 text-center text-sm text-ink-2">No bank transactions dated in this period.</p>
+      {report.accounts.length === 0 ? (
+        <p className="px-5 py-10 text-center text-sm text-ink-2">
+          No accepted bank transactions dated in this period.{" "}
+          <Link href={`/clients/${id}/transactions`} className="text-accent hover:underline">
+            Open the review screen
+          </Link>
+          .
+        </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-[60rem]">
+          <table className="min-w-[52rem]">
             <thead>
               <tr>
-                <th className="w-28">Date</th>
-                <th>Description</th>
-                <th className="w-40">Bank account</th>
-                <th className="w-56">Account</th>
-                <th className="w-32">Tax code</th>
-                <th className="w-32 text-right">Amount</th>
+                <th className="w-24">Code</th>
+                <th>Account</th>
+                <th className="w-28">Type</th>
+                <th className="w-20 text-right">Count</th>
+                <th className="w-32 text-right">Gross</th>
                 <th className="w-28 text-right">GST</th>
-                <th className="w-28">Status</th>
+                <th className="w-32 text-right">Net</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className={row.excludedAt ? "opacity-60" : undefined}>
-                  <td className="figure text-ink-2">{shortDate(row.date)}</td>
-                  <td className="max-w-[24rem] truncate" title={row.description}>
-                    {row.journalEntryId ? (
-                      <Link href={`/clients/${id}/journals/${row.journalEntryId}`} className="hover:text-accent">
-                        {row.description}
-                      </Link>
-                    ) : (
-                      row.description
-                    )}
-                  </td>
-                  <td className="text-ink-2">{row.bankAccountName}</td>
+              {report.accounts.map((row) => (
+                <tr key={row.accountId}>
+                  <td className="code text-ink-3">{row.code}</td>
                   <td>
-                    {row.accountCode !== null ? (
-                      <>
-                        <span className="code mr-1.5 text-ink-3">{row.accountCode}</span>
-                        {row.accountName}
-                      </>
-                    ) : (
-                      <span className="text-ink-3">Not coded</span>
-                    )}
+                    <details className="group">
+                      <summary className="flex cursor-pointer list-none items-center gap-2 font-medium [&::-webkit-details-marker]:hidden">
+                        {row.name}
+                        <Icon name="chevron-down" className="size-3.5 text-ink-3 transition-transform group-open:rotate-180" />
+                      </summary>
+                      <ul className="mt-2 flex flex-col gap-1 text-xs text-ink-2">
+                        {row.contributors.map((line, index) => (
+                          <li key={`${line.entryId}-${index}`} className="flex items-center gap-3">
+                            <span className="figure w-20 shrink-0 text-ink-3">{shortDate(line.date)}</span>
+                            <Link href={`/clients/${id}/journals/${line.entryId}`} className="min-w-0 flex-1 truncate hover:text-accent">
+                              {line.description ?? "Journal entry"}
+                            </Link>
+                            <Money cents={line.cents} />
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                   </td>
-                  <td className="text-ink-2">{row.gstTreatment ? GST_TREATMENT_LABELS[row.gstTreatment] : "—"}</td>
+                  <td className="text-ink-2">{ACCOUNT_TYPE_LABELS[row.type]}</td>
+                  <td className="figure text-right">{row.count}</td>
                   <td className="text-right">
-                    <Money cents={row.amountCents} />
+                    <Money cents={row.grossCents} />
                   </td>
                   <td className="text-right">{row.gstCents !== 0 ? <Money cents={row.gstCents} /> : <span className="text-ink-3">—</span>}</td>
-                  <td>
-                    {row.excludedAt ? (
-                      <Badge tone="neutral">Excluded</Badge>
-                    ) : row.status === "REVIEWED" ? (
-                      <Badge tone="positive">Accepted</Badge>
-                    ) : row.status === "CLASSIFIED" ? (
-                      <Badge tone={row.needsReview ? "warning" : "accent"}>{row.needsReview ? "Review" : "Ready"}</Badge>
-                    ) : (
-                      <Badge tone="outline">Not coded</Badge>
-                    )}
+                  <td className="text-right">
+                    <Money cents={row.netCents} />
                   </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={5}>
-                  Money in <Money cents={totalIn} className="ml-2" /> · Money out <Money cents={totalOut} className="ml-2" />
+                <td colSpan={3}>Total</td>
+                <td className="figure text-right">{report.totalCount}</td>
+                <td className="text-right">
+                  <Money cents={report.totalGrossCents} emphasis />
                 </td>
                 <td className="text-right">
-                  <Money cents={totalIn + totalOut} emphasis />
+                  <Money cents={report.totalGstCents} emphasis />
                 </td>
                 <td className="text-right">
-                  <Money cents={totalGst} emphasis />
+                  <Money cents={report.totalNetCents} emphasis />
                 </td>
-                <td />
               </tr>
             </tfoot>
           </table>

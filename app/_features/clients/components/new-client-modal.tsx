@@ -198,7 +198,7 @@ export function NewClientModal({
                 <div className="grid gap-4 border-t border-rule pt-5 sm:grid-cols-2">
                   <Field
                     label="Income tax rate (%)"
-                    name="incomeTaxRate"
+                    name="incomeTaxRatePercent"
                     type="number"
                     defaultValue="25"
                     hint="25% is the base rate entity company rate."

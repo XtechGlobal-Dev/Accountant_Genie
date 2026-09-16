@@ -44,6 +44,17 @@ export default async function TparPage({
       subtitle={<>{client.businessName} · FY{fy} · payments to subcontractors, gross including GST</>}
       footnote="Sums the journal lines posted to the subcontractor payments account and linked to a subcontractor. Prepared for review; not lodged from here."
     >
+      <div className="px-5 pt-4">
+        {report.mappingVerified ? (
+          <Badge tone="positive" title="The reportable accounts have been verified by the registered tax advisor under Settings → Tax rules.">
+            Verified mapping · accounts {report.accountCodes.join(", ")}
+          </Badge>
+        ) : (
+          <Badge tone="warning" title="Sums the chart's Subcontractor Payments account. Which accounts are TPAR-reportable is to be confirmed by the registered tax advisor under Settings → Tax rules → TPAR accounts.">
+            Verify mapping · accounts {report.accountCodes.join(", ")}
+          </Badge>
+        )}
+      </div>
       {report.unlinkedCount > 0 ? (
         <div className="px-5 pt-4">
           <Alert

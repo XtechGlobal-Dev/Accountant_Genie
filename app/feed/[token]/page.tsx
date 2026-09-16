@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { consume } from "@/server/core/rate-limit";
 import { findFeedRequestByToken, respondToFeedRequest } from "@/server/modules/banking/feeds";
 import { shortDate } from "@/shared/format";
 import { BrandLogo } from "@/ui/icons";
@@ -13,35 +14,59 @@ export const dynamic = "force-dynamic";
  * The client's side of a bank feed request. No sign-in: the token in the
  * link is the credential, single-use and time-limited. The page shows who is
  * asking and for which business, and records the answer.
+ *
+ * The answer is a POST. A GET that recorded consent would be recorded by
+ * every link prefetcher, mail scanner and proxy that fetched the emailed
+ * URL — a CDR consent must be an act, not a side effect of a click.
+ *
+ * Token lookups are throttled per address so the link space cannot be
+ * walked; the token is 256 bits, the throttle is belt and braces.
  */
+
+async function requestOrigin(): Promise<{ origin: string; ip: string | null }> {
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const proto = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const forwarded = requestHeaders.get("x-forwarded-for");
+  const ip = (forwarded ? forwarded.split(",")[0]?.trim() : requestHeaders.get("x-real-ip")) ?? null;
+  return { origin: `${proto}://${host}`, ip };
+}
+
+async function throttled(ip: string | null): Promise<boolean> {
+  const limit = await consume(`feed-token:${ip ?? "unknown"}`, 30, 15 * 60_000);
+  return !limit.ok;
+}
+
+/** Records the client's answer. A server action: reachable only by POST. */
+async function answer(formData: FormData) {
+  "use server";
+  const token = String(formData.get("token") ?? "");
+  const choice = String(formData.get("answer") ?? "");
+  if (!token || (choice !== "approve" && choice !== "decline")) return;
+  const { origin, ip } = await requestOrigin();
+  if (await throttled(ip)) return;
+
+  const outcome = await respondToFeedRequest(token, choice === "approve", origin);
+  // With a provider configured, approval continues at the bank's consent
+  // page. `redirect` throws, so nothing below it runs on the happy path.
+  if (outcome.consentUrl) redirect(outcome.consentUrl);
+  redirect(`/feed/${encodeURIComponent(token)}?done=1${outcome.error ? "&provider=unavailable" : ""}`);
+}
+
 export default async function FeedRequestPage({
   params,
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ answer?: string }>;
+  searchParams: Promise<{ done?: string; provider?: string }>;
 }) {
   const { token } = await params;
-  const { answer } = await searchParams;
+  const { done, provider } = await searchParams;
+  const { ip } = await requestOrigin();
 
-  let view = await findFeedRequestByToken(token);
-  let responded = false;
-  let consentError: string | null = null;
-
-  if (view && view.status === "PENDING" && (answer === "approve" || answer === "decline")) {
-    const requestHeaders = await headers();
-    const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
-    const proto = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-    const outcome = await respondToFeedRequest(token, answer === "approve", `${proto}://${host}`);
-    responded = outcome.recorded;
-    // With a provider configured, approval continues at the bank's consent
-    // page. `redirect` throws, so nothing below it runs on the happy path.
-    if (outcome.consentUrl) redirect(outcome.consentUrl);
-    // The answer is recorded either way — the firm must not lose the fact that
-    // the client agreed just because the provider was briefly unreachable.
-    consentError = outcome.error;
-    view = await findFeedRequestByToken(token);
-  }
+  const view = (await throttled(ip)) ? null : await findFeedRequestByToken(token);
+  const responded = done === "1";
+  const consentError = provider === "unavailable";
 
   return (
     <main id="main" className="flex min-h-svh items-center justify-center bg-ground px-4 py-10">
@@ -77,14 +102,15 @@ export default async function FeedRequestPage({
               {view.providerName}, an accredited data recipient.
             </p>
             <p className="mt-4 text-xs text-ink-3">This request expires on {shortDate(view.expiresAt)}.</p>
-            <div className="mt-6 flex gap-2">
-              <a href={`?answer=decline`} className={buttonClass({ variant: "secondary", className: "flex-1" })}>
+            <form action={answer} className="mt-6 flex gap-2">
+              <input type="hidden" name="token" value={token} />
+              <button type="submit" name="answer" value="decline" className={buttonClass({ variant: "secondary", className: "flex-1" })}>
                 Decline
-              </a>
-              <a href={`?answer=approve`} className={buttonClass({ className: "flex-1" })}>
+              </button>
+              <button type="submit" name="answer" value="approve" className={buttonClass({ className: "flex-1" })}>
                 Approve
-              </a>
-            </div>
+              </button>
+            </form>
           </>
         ) : view.status === "CONNECTED" ? (
           <>

@@ -52,7 +52,7 @@ import { TRUST_ENTITIES } from "./schema";
  */
 function entityFields(input: CreateClientInput | UpdateClientInput) {
   return {
-    incomeTaxRate: input.entityType === "COMPANY" ? (input.incomeTaxRate ?? 25) : null,
+    incomeTaxRatePercent: input.entityType === "COMPANY" ? (input.incomeTaxRatePercent ?? 25) : null,
     totalUnits: input.entityType === "UNIT_TRUST" ? (input.totalUnits ?? null) : null,
     unitValueCents:
       input.entityType === "UNIT_TRUST" ? (input.unitValueCents ?? null) : null,
@@ -173,11 +173,17 @@ export async function hasClientLedgerData(firmId: string, clientId: string): Pro
 /* Writes                                                                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Every client mutation is audited inside the write's own transaction. A
+ * client's ABN, entity type, GST registration and BAS frequency decide how its
+ * books are kept; a change with no trace is a change nobody can explain.
+ */
 export async function createClient(
   firmId: string,
+  userId: string,
   input: CreateClientInput,
 ): Promise<{ id: string }> {
-  return repo.createClient({
+  const data = {
     firmId,
     businessName: input.businessName,
     abn: orNull(input.abn),
@@ -185,16 +191,40 @@ export async function createClient(
     entityType: input.entityType,
     gstRegistered: input.gstRegistered,
     ...entityFields(input),
+  };
+  return db.$transaction(async (tx) => {
+    const created = await repo.createClient(tx, data);
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId: created.id,
+      action: "CLIENT_CREATED",
+      entityType: "Client",
+      entityId: created.id,
+      after: { businessName: data.businessName, abn: data.abn, entityType: data.entityType, gstRegistered: data.gstRegistered },
+    });
+    return created;
   });
 }
 
-/** `false` means the firm does not own a client with that ID — or none exists. */
+export type UpdateOutcome = "updated" | "not_found" | "conflict";
+
+/**
+ * Optimistic: the form carries the version it was opened with, and a stale
+ * edit is refused rather than merged over a colleague's. "not_found" for a
+ * client the firm does not own — never "forbidden".
+ */
 export async function updateClient(
   firmId: string,
+  userId: string,
   clientId: string,
   input: UpdateClientInput,
-): Promise<boolean> {
-  const count = await repo.updateOwnedClient(firmId, clientId, {
+): Promise<UpdateOutcome> {
+  const before = await repo.findClientDetail(firmId, clientId);
+  if (!before) return "not_found";
+  if (input.version !== undefined && input.version !== before.version) return "conflict";
+
+  const data = {
     businessName: input.businessName,
     legalName: orNull(input.legalName),
     abn: orNull(input.abn),
@@ -206,8 +236,36 @@ export async function updateClient(
     gstBasis: input.gstBasis,
     basFrequency: input.basFrequency,
     ...entityFields(input),
+  };
+  return db.$transaction(async (tx) => {
+    const count = await repo.updateOwnedClient(tx, firmId, clientId, data, before.version);
+    if (count === 0) return "conflict" as const;
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId,
+      action: "CLIENT_UPDATED",
+      entityType: "Client",
+      entityId: clientId,
+      before: {
+        businessName: before.businessName,
+        abn: before.abn,
+        entityType: before.entityType,
+        gstRegistered: before.gstRegistered,
+        gstBasis: before.gstBasis,
+        basFrequency: before.basFrequency,
+      },
+      after: {
+        businessName: data.businessName,
+        abn: data.abn,
+        entityType: data.entityType,
+        gstRegistered: data.gstRegistered,
+        gstBasis: data.gstBasis,
+        basFrequency: data.basFrequency,
+      },
+    });
+    return "updated" as const;
   });
-  return count > 0;
 }
 
 /**
@@ -216,13 +274,24 @@ export async function updateClient(
  */
 export async function setClientArchived(
   firmId: string,
+  userId: string,
   clientId: string,
   archived: boolean,
 ): Promise<boolean> {
-  const count = await repo.updateOwnedClient(firmId, clientId, {
-    archivedAt: archived ? new Date() : null,
+  return db.$transaction(async (tx) => {
+    const count = await repo.updateOwnedClient(tx, firmId, clientId, { archivedAt: archived ? new Date() : null });
+    if (count === 0) return false;
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId,
+      action: archived ? "CLIENT_ARCHIVED" : "CLIENT_RESTORED",
+      entityType: "Client",
+      entityId: clientId,
+      after: { archived },
+    });
+    return true;
   });
-  return count > 0;
 }
 
 /**
@@ -234,13 +303,25 @@ export async function setClientArchived(
  */
 export async function addClientNote(
   firmId: string,
+  userId: string,
   clientId: string,
   input: ClientNoteInput,
 ): Promise<boolean> {
   const client = await repo.findOwnedClientId(firmId, clientId);
   if (!client) return false;
 
-  await repo.createClientNote(client.id, input.title, input.body);
+  await db.$transaction(async (tx) => {
+    const note = await repo.createClientNote(tx, client.id, input.title, input.body);
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId: client.id,
+      action: "CLIENT_NOTE_ADDED",
+      entityType: "ClientNote",
+      entityId: note.id,
+      after: { title: input.title },
+    });
+  });
   return true;
 }
 
@@ -366,7 +447,7 @@ export async function getClientNotes(firmId: string, clientId: string): Promise<
  * served under a new one. The previous object is left in place: storage is
  * append-only here, like everything else that was once shown to a user.
  */
-export async function setClientLogo(firmId: string, clientId: string, bytes: Uint8Array): Promise<ActionResult> {
+export async function setClientLogo(firmId: string, userId: string, clientId: string, bytes: Uint8Array): Promise<ActionResult> {
   const client = await repo.findOwnedClientId(firmId, clientId);
   if (!client) return { ok: false, error: "Client not found" };
 
@@ -375,14 +456,36 @@ export async function setClientLogo(firmId: string, clientId: string, bytes: Uin
 
   const key = `${firmId}/clients/${client.id}/logo-${Date.now()}.${checked.kind.ext}`;
   await getStorage().put(key, Buffer.from(bytes), checked.kind.contentType);
-  await repo.updateOwnedClient(firmId, client.id, { logoKey: key });
+  await db.$transaction(async (tx) => {
+    await repo.updateOwnedClient(tx, firmId, client.id, { logoKey: key });
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId: client.id,
+      action: "CLIENT_LOGO_UPDATED",
+      entityType: "Client",
+      entityId: client.id,
+      after: { storageKey: key, bytes: bytes.byteLength },
+    });
+  });
   return { ok: true, id: client.id };
 }
 
 /** `false` when the firm does not own the client. */
-export async function removeClientLogo(firmId: string, clientId: string): Promise<boolean> {
-  const count = await repo.updateOwnedClient(firmId, clientId, { logoKey: null });
-  return count > 0;
+export async function removeClientLogo(firmId: string, userId: string, clientId: string): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    const count = await repo.updateOwnedClient(tx, firmId, clientId, { logoKey: null });
+    if (count === 0) return false;
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId,
+      action: "CLIENT_LOGO_REMOVED",
+      entityType: "Client",
+      entityId: clientId,
+    });
+    return true;
+  });
 }
 
 /** The stored logo, or `null` when there is none — or the client is not this firm's. */

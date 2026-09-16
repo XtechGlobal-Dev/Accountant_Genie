@@ -141,6 +141,33 @@ export const RoleSchema = z.object({
   role: z.enum(["OWNER", "ADMIN", "ACCOUNTANT", "BOOKKEEPER", "STAFF", "VIEWER"]),
 });
 
+/**
+ * Granting or withdrawing a team member's tax-agent registration. Granted by
+ * whoever manages users, on the record of the body and number, so the right
+ * to verify a tax rule is something the firm's owner conferred — not
+ * something ticked on a form.
+ */
+export const TaxAgentSchema = z
+  .object({
+    isTaxAgent: z.coerce.boolean(),
+    professionalBody: z
+      .union([z.enum(PROFESSIONAL_BODIES), z.literal("")])
+      .optional()
+      .transform((v) => (v ? v : undefined)),
+    agentNumber: optionalText(40),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.isTaxAgent) return;
+    if (!value.professionalBody) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["professionalBody"], message: "Select the body they are registered with" });
+    }
+    if (!value.agentNumber) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["agentNumber"], message: "Enter their registration number" });
+    }
+  });
+
+export type TaxAgentInput = z.infer<typeof TaxAgentSchema>;
+
 const text = (form: FormData, key: string) => String(form.get(key) ?? "");
 
 export const fromForm = {
@@ -170,4 +197,10 @@ export const fromForm = {
     }),
   invite: (f: FormData) => InviteSchema.safeParse({ name: text(f, "name"), email: text(f, "email"), role: text(f, "role") }),
   role: (f: FormData) => RoleSchema.safeParse({ role: text(f, "role") }),
+  taxAgent: (f: FormData) =>
+    TaxAgentSchema.safeParse({
+      isTaxAgent: text(f, "isTaxAgent") === "yes",
+      professionalBody: text(f, "professionalBody"),
+      agentNumber: text(f, "agentNumber"),
+    }),
 };

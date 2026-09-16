@@ -137,6 +137,13 @@ Violating any of these is a defect regardless of test status.
 - Ownership is part of the query, not a check afterwards. Prefer `findFirst` with the ownership path.
 - Cross-tenant access returns **404, not 403**.
 - Every route needs an IDOR test.
+- **A request may name several resources; every one of them is ownership-checked.** A recode resolves
+  the account, the subcontractor and the loan through the client's own records.
+- Rows two people edit at once (transactions, clients, accounts, memory rules, prepared BAS) carry a
+  `version`; an edit sends it back and a stale one is refused, never merged.
+- Signing off a tax rule or a flagged account treatment needs `canVerifyTax(session)` — the
+  `tax:verify` permission AND the recorded registration — and reaches only the firm's own rows.
+  Tax rule versions are firm-scoped; a system account's sign-off is a per-firm `AccountVerification`.
 
 ### AI
 - Structured output via Zod. **Never parse free-form text for an accounting decision.**
@@ -274,6 +281,7 @@ npm run db:reset     # destructive: reset + reseed
 npm run db:purge-demo  # delete the seeded "Meridian Accounting" demo firm and everything under it; other firms untouched
 npm test             # unit tests (offline)
 npm run test:idor    # cross-tenant suite (needs a real database)
+npm run test:db      # ledger invariant + import idempotency against a real database
 npm run worker       # BullMQ worker
 ```
 
@@ -283,6 +291,11 @@ why each backend entry point finds `server/.env` by loading a plain `.env` relat
 You can also run them from inside `server/` directly.
 
 Staging and production use `prisma migrate deploy`. Never `db push` outside local development.
+
+A local database that was built with `db push` before the migration history existed is baselined
+once with `prisma migrate resolve --applied <name>` for each migration already reflected in it, then
+`prisma migrate deploy` applies the rest. CI deploys every migration from scratch on every run, so a
+migration that only works on top of a pushed schema cannot merge.
 
 `FISKIL_CLIENT_ID` / `FISKIL_CLIENT_SECRET` (in `server/.env`) enable live bank feeds.
 `FISKIL_WEBHOOK_SECRET` is separate and optional — it is issued only when a publicly
@@ -395,9 +408,24 @@ The Fiskil docs MCP server is registered at **user scope**
 — use `search_docs`, `get_page` and `get_api_endpoint_details`, and prefer the guides and
 the API reference over `get_code_examples`.
 
-**Still open:** the registered tax advisor has to verify the seeded rule proposals and enter
-the instant asset write-off and car limit amounts under Settings → Tax rules before those
-figures affect any report. Low-value pooling is not modelled.
+**Hardening from the skills audit (16 September 2026, `docs/SKILLS-AUDIT.md`):** tax rules are
+firm-scoped and seeded per firm; account treatment sign-off is a per-firm row; a prepared BAS is kept
+as calculated / adjustment / final per label with the rule versions it was built under
+(`BasStatement`); usage is metered as append-only `UsageEvent`s; optimistic locking on the rows two
+people edit; accounting parents are RESTRICT; the Transactions report reads journal lines; TPAR and
+the input-taxed G1/G11 inclusion are verified rules; loan repayments split into principal and
+interest at acceptance; the AI provider identifies subcontractors for a person to confirm, masks
+narrations, and stores the input hash, the raw proposal and the decision time; reconciliation runs
+as a job; stale RUNNING jobs are reaped; the CI workflow runs typecheck, unit, IDOR, DB and golden
+suites. The migration history was repaired (the init migration carried stray CLI output; the bank
+feed schema had never been migrated).
+
+**Still open:** each firm's registered tax advisor has to verify that firm's rule proposals and
+enter the instant asset write-off and car limit amounts under Settings → Tax rules before those
+figures affect any report. Low-value pooling is not modelled. A general split-transaction model
+(M5.4) does not exist yet — only the loan principal/interest split at acceptance. Large reports and
+exports still run inside the request. Malware scanning of uploads is not wired. There is no admin
+dashboard.
 
 ## 10. Working style in this repo
 

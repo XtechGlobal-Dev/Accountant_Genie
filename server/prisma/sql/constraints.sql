@@ -35,3 +35,22 @@ CREATE UNIQUE INDEX "Account_code_firmId_clientId_key"
 ALTER TABLE "BankTransaction" DROP CONSTRAINT IF EXISTS "BankTransaction_gst_bounded";
 ALTER TABLE "BankTransaction" ADD CONSTRAINT "BankTransaction_gst_bounded"
   CHECK (ABS("gstCents") <= ABS("amountCents"));
+
+-- Registers: costs and loan terms are never negative.
+ALTER TABLE "Asset" DROP CONSTRAINT IF EXISTS "Asset_cost_nonnegative";
+ALTER TABLE "Asset" ADD CONSTRAINT "Asset_cost_nonnegative" CHECK ("costCents" >= 0);
+
+ALTER TABLE "Loan" DROP CONSTRAINT IF EXISTS "Loan_principal_nonnegative";
+ALTER TABLE "Loan" ADD CONSTRAINT "Loan_principal_nonnegative" CHECK ("principalCents" >= 0);
+
+ALTER TABLE "Loan" DROP CONSTRAINT IF EXISTS "Loan_repayment_nonnegative";
+ALTER TABLE "Loan" ADD CONSTRAINT "Loan_repayment_nonnegative" CHECK ("repaymentCents" >= 0);
+
+-- Prepared BAS: the final figure is always calculated + adjustment.
+ALTER TABLE "BasStatementLine" DROP CONSTRAINT IF EXISTS "BasStatementLine_final_is_sum";
+ALTER TABLE "BasStatementLine" ADD CONSTRAINT "BasStatementLine_final_is_sum"
+  CHECK ("finalCents" = "calculatedCents" + "adjustmentCents");
+
+-- Usage: an event always counts something.
+ALTER TABLE "UsageEvent" DROP CONSTRAINT IF EXISTS "UsageEvent_quantity_positive";
+ALTER TABLE "UsageEvent" ADD CONSTRAINT "UsageEvent_quantity_positive" CHECK ("quantity" > 0);

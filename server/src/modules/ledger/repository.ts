@@ -27,6 +27,7 @@ const LINE_SELECT = {
   gstCents: true,
   gstTreatment: true,
   subcontractorId: true,
+  bankTransactionId: true,
   account: { select: { code: true, name: true } },
 } satisfies Prisma.JournalLineSelect;
 
@@ -66,6 +67,8 @@ export function findEntry(firmId: string, clientId: string, entryId: string) {
       reversedBy: { select: { id: true, date: true } },
       postedBy: { select: { name: true } },
       lines: { orderBy: { id: "asc" }, select: LINE_SELECT },
+      // The bank transactions posted through this entry, for the reversal guard.
+      transactions: { select: { id: true, status: true } },
     },
   });
 }

@@ -1,0 +1,95 @@
+# Every gate the skills call for, on every push and pull request.
+#
+#   typecheck  — both packages, strict
+#   unit       — money, GST, ledger invariants, report aggregation, parsing,
+#                webhook signatures, AI provider guards (offline, MockProvider)
+#   db         — against a throwaway Postgres: migrations deploy from scratch,
+#                the IDOR suite (every service answers "not found" across
+#                firms), the trial balance sums to zero after real postings,
+#                and an import run twice creates no duplicate rows
+#   golden     — the AI regression set with the deterministic MockProvider, so
+#                a change to rules, memory or the gate cannot ship unchecked.
+#                A real-model run needs ANTHROPIC_API_KEY and is a separate,
+#                manual workflow: it costs money and is not deterministic.
+#
+# The database job uses a service container, never a shared environment: the
+# IDOR suite creates and deletes firms.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run generate --workspace @ledgerly/server
+      - run: npm run typecheck --workspace @ledgerly/server
+      # next-env.d.ts is git-ignored and carries the image and route type
+      # declarations the frontend typecheck needs; typegen writes it without a build.
+      - run: npx next typegen
+      - run: npm run typecheck
+      - run: npm test
+
+  database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ledgerly
+          POSTGRES_PASSWORD: ledgerly
+          POSTGRES_DB: ledgerly
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ledgerly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ledgerly:ledgerly@localhost:5432/ledgerly
+      DIRECT_DATABASE_URL: postgresql://ledgerly:ledgerly@localhost:5432/ledgerly
+      AUTH_SECRET: ci-only-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run generate --workspace @ledgerly/server
+      # Migrations from scratch, exactly as staging and production apply them.
+      - run: npx prisma migrate deploy
+        working-directory: server
+      - run: npm run db:seed
+      - run: npm run test:idor
+      - run: npm run test:db
+
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run generate --workspace @ledgerly/server
+      # No key: the deterministic MockProvider runs the set. The headline
+      # number is false auto-approvals, and any is a failure.
+      - run: npm run ai:golden
+        env:
+          GOLDEN_RUNS: "1"

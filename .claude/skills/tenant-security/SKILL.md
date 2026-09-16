@@ -53,13 +53,24 @@ authenticated user → firm membership → permission → resource ownership
 All four. Frontend route guards are UX, not security — the API is the boundary, and it must assume the
 frontend is hostile.
 
-Roles: `OWNER · ADMIN · ACCOUNTANT · BOOKKEEPER · STAFF · CLIENT · VIEWER`
+Roles: `OWNER · ADMIN · ACCOUNTANT · BOOKKEEPER · STAFF · VIEWER`. There is no CLIENT role: a client never signs in — the only client-facing surface is the token-authenticated bank-feed consent page.
 
-Permissions are granular, not role checks scattered through the code:
-`client:create` `client:read` `client:update` `client:delete` · `transaction:read` `transaction:update`
-`transaction:delete` `transaction:approve` · `journal:create` `journal:post` `journal:reverse` ·
-`report:read` `report:export` · `bas:prepare` `bas:approve` · `billing:read` `billing:manage` ·
-`organisation:manage` `users:manage`
+Permissions are granular, not role checks scattered through the code. The list lives in
+`server/src/core/permissions.ts` and every one of them is checked somewhere:
+`client:create` `client:read` `client:update` `client:archive` · `transaction:read` `transaction:update`
+`transaction:approve` `transaction:exclude` · `journal:create` `journal:post` `journal:reverse` ·
+`memory:manage` `account:manage` `register:manage` `statement:upload` · `report:read` `report:export` ·
+`bas:prepare` `bas:approve` · `tax:verify` · `billing:read` `billing:manage` · `organisation:manage`
+`users:manage` · `audit:read`
+
+There is no `client:delete` or `transaction:delete`: accounting records are archived, deactivated,
+excluded or reversed, never deleted, so no permission to delete them exists.
+
+Signing off a tax rule or a flagged account treatment needs `tax:verify` AND the person's recorded
+tax-agent registration — `canVerifyTax(session)`. Either alone verifies nothing. The registration is
+recorded by whoever manages users, on the body and number, and is scoped to the firm: a tax rule
+version belongs to a firm, and an account sign-off is a per-firm row, so no one can verify anything
+another firm's reports read.
 
 Check the permission, never the role. Roles map to permissions in one place.
 

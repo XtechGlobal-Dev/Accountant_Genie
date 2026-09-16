@@ -1,20 +1,26 @@
 import "server-only";
 
-import { db } from "@/server/core/db";
+import { db, type DbClient } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
 import type { ActionResult } from "@/shared/contracts/result";
 import type { TaxRuleVersionView, TaxRuleView } from "@/shared/contracts/tax-rule";
-import { TAX_RULES, ruleDefinition } from "./catalogue";
+import { TAX_RULES, ruleDefinition, seedProposals } from "./catalogue";
+
+export { parseCodes, parseDepreciationMethods, parseInputTaxedBasLabels } from "./catalogue";
 
 /**
- * Versioned tax rules with advisor sign-off.
+ * Versioned tax rules with advisor sign-off, scoped to a firm.
  *
- * A version is proposed (pending), then verified by a registered tax agent,
- * which supersedes any earlier verified version of the same rule whose
- * effective window overlaps. Reports read `currentRule(code, asAt)`, which
- * returns only a VERIFIED version in effect on that date — a pending value
- * is never applied. Historical reports keep reproducing because versions are
- * never edited, only added.
+ * A version is proposed (pending), then verified by the firm's registered tax
+ * agent, which supersedes any earlier verified version of the same rule whose
+ * effective window overlaps. Reports read `currentRule(firmId, code, asAt)`,
+ * which returns only a VERIFIED version in effect on that date — a pending
+ * value is never applied. Historical reports keep reproducing because
+ * versions are never edited, only added.
+ *
+ * The firm is in every query. One firm's agent can never see, verify or
+ * supersede another firm's rules — a rule ID from another tenant is "not
+ * found", exactly like every other record.
  */
 
 type Row = {
@@ -67,10 +73,11 @@ function toView(row: Row): TaxRuleVersionView {
   };
 }
 
-/** The verified version in effect on a date, or null when none is. */
-export async function currentRule(code: string, asAt: Date): Promise<TaxRuleVersionView | null> {
+/** The verified version in effect on a date for this firm, or null when none is. */
+export async function currentRule(firmId: string, code: string, asAt: Date): Promise<TaxRuleVersionView | null> {
   const row = await db.taxRuleVersion.findFirst({
     where: {
+      firmId,
       code,
       status: "VERIFIED",
       effectiveFrom: { lte: asAt },
@@ -83,12 +90,13 @@ export async function currentRule(code: string, asAt: Date): Promise<TaxRuleVers
 }
 
 /** Whether a mapping rule has been verified at all — for report badges. */
-export async function ruleVerified(code: string, asAt: Date): Promise<boolean> {
-  return (await currentRule(code, asAt)) !== null;
+export async function ruleVerified(firmId: string, code: string, asAt: Date): Promise<boolean> {
+  return (await currentRule(firmId, code, asAt)) !== null;
 }
 
-export async function listTaxRules(): Promise<TaxRuleView[]> {
+export async function listTaxRules(firmId: string): Promise<TaxRuleView[]> {
   const rows = await db.taxRuleVersion.findMany({
+    where: { firmId },
     orderBy: [{ code: "asc" }, { effectiveFrom: "desc" }, { createdAt: "desc" }],
     select: SELECT,
   });
@@ -133,6 +141,7 @@ export async function proposeVersion(firmId: string, userId: string, input: Rule
   const id = await db.$transaction(async (tx) => {
     const created = await tx.taxRuleVersion.create({
       data: {
+        firmId,
         code: definition.code,
         label: definition.label,
         description: definition.description,
@@ -157,9 +166,11 @@ export async function proposeVersion(firmId: string, userId: string, input: Rule
 }
 
 /**
- * Sign a pending version off. The caller must be a registered tax agent —
- * the action checks that; the service records who. Earlier verified versions
- * of the same rule that overlap are superseded, never edited.
+ * Sign a pending version off. The caller must be a registered tax agent with
+ * the `tax:verify` permission — the action checks that; the service records
+ * who. Earlier verified versions of the same rule that overlap are superseded,
+ * never edited. The firm is part of the lookup: another firm's version is
+ * "not found".
  */
 export async function verifyVersion(
   firmId: string,
@@ -167,7 +178,7 @@ export async function verifyVersion(
   versionId: string,
   note: string | null,
 ): Promise<ActionResult> {
-  const version = await db.taxRuleVersion.findUnique({ where: { id: versionId }, select: SELECT });
+  const version = await db.taxRuleVersion.findFirst({ where: { id: versionId, firmId }, select: SELECT });
   if (!version) return { ok: false, error: "Version not found" };
   if (version.status !== "PENDING_VERIFICATION") return { ok: false, error: "Only a pending version can be verified" };
   if (version.valueCents === null && !version.valueText) {
@@ -177,6 +188,7 @@ export async function verifyVersion(
   await db.$transaction(async (tx) => {
     await tx.taxRuleVersion.updateMany({
       where: {
+        firmId,
         code: version.code,
         status: "VERIFIED",
         id: { not: version.id },
@@ -184,8 +196,8 @@ export async function verifyVersion(
       },
       data: { status: "SUPERSEDED", effectiveTo: version.effectiveFrom },
     });
-    await tx.taxRuleVersion.update({
-      where: { id: version.id },
+    await tx.taxRuleVersion.updateMany({
+      where: { id: version.id, firmId },
       data: { status: "VERIFIED", verifiedById: userId, verifiedAt: new Date(), note: note ?? version.note },
     });
     await recordAudit(tx, {
@@ -200,12 +212,43 @@ export async function verifyVersion(
   return { ok: true, id: version.id };
 }
 
-/** Account codes from a verified mapping rule, or the fallback when none is verified. */
-export function parseCodes(valueText: string | null | undefined, fallback: readonly number[]): number[] {
-  if (!valueText) return [...fallback];
-  const codes = valueText
-    .split(/[,\s]+/)
-    .map((v) => Number(v))
-    .filter((n) => Number.isInteger(n) && n >= 0);
-  return codes.length > 0 ? codes : [...fallback];
+/**
+ * The proposals every new firm starts with, written on the caller's
+ * transaction so a firm never exists without them. Idempotent: a firm that
+ * already has any version of a rule is left alone.
+ */
+export async function seedProposalsForFirm(tx: DbClient, firmId: string): Promise<number> {
+  const existing = new Set(
+    (await tx.taxRuleVersion.findMany({ where: { firmId }, select: { code: true }, distinct: ["code"] })).map((r) => r.code),
+  );
+  let created = 0;
+  for (const proposal of seedProposals()) {
+    if (existing.has(proposal.code)) {
+      // A proposal nobody has verified is still the catalogue's, so it follows
+      // the catalogue — when the chart of accounts is replaced, the account
+      // codes a mapping proposes move with it. A VERIFIED version is never
+      // touched: that is the advisor's, and versions are never edited.
+      await tx.taxRuleVersion.updateMany({
+        where: { firmId, code: proposal.code, status: "PENDING_VERIFICATION", valueText: { not: proposal.valueText }, note: proposal.note },
+        data: { valueText: proposal.valueText, label: proposal.label, description: proposal.description },
+      });
+      continue;
+    }
+    await tx.taxRuleVersion.create({ data: { firmId, ...proposal }, select: { id: true } });
+    created += 1;
+  }
+  return created;
+}
+
+/**
+ * The verified versions a report consulted, keyed by rule code — stored with
+ * a prepared BAS so the statement names exactly what it was computed under.
+ */
+export async function ruleVersionsInForce(
+  firmId: string,
+  codes: readonly string[],
+  asAt: Date,
+): Promise<Record<string, string | null>> {
+  const entries = await Promise.all(codes.map(async (code) => [code, (await currentRule(firmId, code, asAt))?.id ?? null] as const));
+  return Object.fromEntries(entries);
 }

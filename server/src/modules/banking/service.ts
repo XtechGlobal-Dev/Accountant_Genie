@@ -1,6 +1,7 @@
 import "server-only";
 
 import { db } from "@/server/core/db";
+import { recordAudit } from "@/server/core/audit";
 import type { BankAccountRow } from "@/shared/contracts/bank-account";
 import * as clients from "@/server/modules/clients/repository";
 import * as repo from "./repository";
@@ -52,6 +53,7 @@ export async function countTransactionsByStatus(firmId: string, clientId: string
 /** `null` means the firm does not own a client with that ID. */
 export async function createAccount(
   firmId: string,
+  userId: string,
   clientId: string,
   input: BankAccountInput,
 ): Promise<{ id: string } | null> {
@@ -74,6 +76,17 @@ export async function createAccount(
     });
 
     if (cashAtBank) await repo.promoteCashAtBank(tx, client.id, account.id);
+    // Which account is Cash at Bank decides the balance sheet's bank line;
+    // that is an accounting fact and is audited like one.
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId: client.id,
+      action: "BANK_ACCOUNT_CREATED",
+      entityType: "BankAccount",
+      entityId: account.id,
+      after: { name: input.name, kind: input.kind, isCashAtBank: cashAtBank },
+    });
     return account;
   });
 }
@@ -81,6 +94,7 @@ export async function createAccount(
 /** `null` means the firm does not own a bank account with that ID. */
 export async function updateAccount(
   firmId: string,
+  userId: string,
   bankAccountId: string,
   input: BankAccountInput,
 ): Promise<{ id: string; clientId: string } | null> {
@@ -96,9 +110,20 @@ export async function updateAccount(
 
     // Cash at Bank is only ever promoted here. The current one is demoted by
     // promoting another, so a client is never left without one.
-    if (input.isCashAtBank && !account.isCashAtBank) {
+    const promoted = input.isCashAtBank && !account.isCashAtBank;
+    if (promoted) {
       await repo.promoteCashAtBank(tx, account.clientId, account.id);
     }
+    await recordAudit(tx, {
+      firmId,
+      userId,
+      clientId: account.clientId,
+      action: "BANK_ACCOUNT_UPDATED",
+      entityType: "BankAccount",
+      entityId: account.id,
+      before: { isCashAtBank: account.isCashAtBank },
+      after: { name: input.name, kind: input.kind, isCashAtBank: account.isCashAtBank || promoted },
+    });
   });
 
   return { id: account.id, clientId: account.clientId };

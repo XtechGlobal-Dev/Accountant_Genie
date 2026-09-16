@@ -66,7 +66,7 @@ describe("AnthropicProvider", () => {
     expect(out.meta).toMatchObject({
       provider: "anthropic",
       model: "claude-opus-5",
-      promptVersion: "transaction-classification-v2",
+      promptVersion: "transaction-classification-v3",
       inputTokens: 900,
       outputTokens: 120,
       cacheReadTokens: 4000,

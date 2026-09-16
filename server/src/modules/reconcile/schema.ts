@@ -14,7 +14,12 @@ export const RecodeSchema = z.object({
   /** The text the memory rule matches on; defaults to the normalised description. */
   pattern: z.string().trim().min(2, "A pattern needs at least two characters").max(200).optional(),
   matchType: MatchTypeEnum.default("EXACT"),
+  /** Resolved against the client's own register; never trusted as given. */
   subcontractorId: z.string().trim().max(64).optional(),
+  /** The loan facility a repayment settles; acceptance then splits principal from interest. */
+  loanId: z.string().trim().max(64).optional(),
+  /** The row version the review screen showed; a stale edit is refused, not merged. */
+  version: z.number().int().min(0).optional(),
 });
 
 export const ExcludeSchema = z.object({
@@ -26,6 +31,7 @@ export const MemoryRuleUpdateSchema = z.object({
   matchType: MatchTypeEnum,
   accountId: z.string().trim().min(1, "Choose an account").max(64),
   gstTreatment: GstTreatmentEnum,
+  version: z.number().int().min(0).optional(),
 });
 
 export const IdListSchema = z.array(z.string().trim().min(1).max(64)).min(1).max(500);

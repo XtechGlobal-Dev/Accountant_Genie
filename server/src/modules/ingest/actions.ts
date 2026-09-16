@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { requireSession } from "@/server/core/session";
 import { can, forbidden } from "@/server/core/permissions";
 import { invalid } from "@/server/core/result";
-import { enqueue, retryJob } from "@/server/jobs/queue";
+import { retryJob } from "@/server/jobs/queue";
+import * as reconcile from "@/server/modules/reconcile/service";
 import { listJobs } from "@/server/jobs/service";
 import type { JobView } from "@/shared/contracts/job";
 import type { ActionResult } from "@/shared/contracts/result";
@@ -60,18 +61,17 @@ export async function getUploadTargets(): Promise<UploadTarget[]> {
   return service.listUploadTargets(firmId);
 }
 
-/** Queue a reconciliation run for everything not yet coded. */
+/**
+ * Queue a reconciliation run for everything not yet coded. The key is
+ * bucketed to the minute: a double-click enqueues one run, not two racing
+ * over the same PENDING rows. The client is scoped inside the service.
+ */
 export async function queueReconciliation(clientId: string): Promise<ActionResult> {
   const session = await requireSession();
   if (!can(session, "transaction:update")) return forbidden();
-  const job = await enqueue({
-    type: "RECONCILE_CLIENT",
-    firmId: session.firmId,
-    clientId,
-    idempotencyKey: `reconcile:${clientId}:${Date.now()}`,
-    createdById: session.userId,
-  });
-  return { ok: true, id: job.id };
+  const job = await reconcile.queueReconciliation(session.firmId, session.userId, clientId);
+  if (!job) return { ok: false, error: "Client not found" };
+  return { ok: true, id: job.jobId };
 }
 
 /** A person's retry of a job that ran out of attempts. */
