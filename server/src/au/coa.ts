@@ -82,7 +82,16 @@ export const AU_CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: 205, name: "Other Income", type: "INCOME", gstTreatment: "GST_ON_INCOME", description: "Income received outside of normal business activities" },
 
   // -------------------------------------------------------------- Expenses
-  { code: 290, name: "Refunds", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Refunds of purchases or customer payments" },
+  {
+    code: 290,
+    name: "Refunds",
+    type: "EXPENSE",
+    gstTreatment: "GST_ON_EXPENSES",
+    description: "Refunds of purchases or customer payments",
+    requiresVerification: true,
+    taxNote:
+      "TYPED AS AN EXPENSE PER THE SUPPLIED CHART, covering two opposite things. A refund RECEIVED from a supplier is a credit against the purchase it reverses. A refund GIVEN to a customer reduces sales — coded as an expense it inflates G11/1B instead of reducing G1/1A, so the BAS overstates both sides. Consider a separate income-side account for customer refunds. CONFIRM with the registered advisor.",
+  },
   { code: 300, name: "Advertising and Marketing", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Google Ads, Facebook Ads, flyers, signage" },
   { code: 310, name: "Accounting and Bookkeeping Fees", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Accountant fees, BAS agent fees" },
   {
@@ -111,7 +120,16 @@ export const AU_CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: 328, name: "Purchases", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Cost of goods purchased for resale or use in business operations" },
   { code: 329, name: "Cleaning and Waste", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Costs for cleaning, waste removal, and disposal of business premises" },
   { code: 330, name: "Business Insurance Premiums", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Public liability, professional indemnity" },
-  { code: 332, name: "Workcover", type: "EXPENSE", gstTreatment: "GST_FREE_EXPENSES", description: "Workers' compensation insurance expense" },
+  {
+    code: 332,
+    name: "Workcover",
+    type: "EXPENSE",
+    gstTreatment: "GST_FREE_EXPENSES",
+    description: "Workers' compensation insurance expense",
+    requiresVerification: true,
+    taxNote:
+      "SET AS GST FREE PER THE SUPPLIED CHART. Workers compensation is a state scheme and the GST treatment of premiums differs between them: some insurer-issued policies carry GST, some statutory scheme charges do not. The firm's state is on the Firm record — CONFIRM the treatment for it with the registered advisor.",
+  },
   { code: 335, name: "Commissions Paid", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Commission payments made for sales, referrals, or performance-based incentives" },
   { code: 340, name: "Computer Equipment and Software", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Computer and office equipment" },
   { code: 350, name: "Consulting Fees", type: "EXPENSE", gstTreatment: "GST_ON_EXPENSES", description: "Business consulting" },

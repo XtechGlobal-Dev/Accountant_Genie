@@ -29,6 +29,7 @@
     "test:watch": "npm run test:watch --workspace @ledgerly/server",
     "test:idor": "npm run test:idor --workspace @ledgerly/server",
     "fiskil:check": "npm run fiskil:check --workspace @ledgerly/server",
+    "test:db": "npm run test:db --workspace @ledgerly/server",
     "db:sync-accounts": "npm run db:sync-accounts --workspace @ledgerly/server"
   },
   "dependencies": {

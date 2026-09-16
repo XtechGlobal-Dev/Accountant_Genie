@@ -19,7 +19,7 @@ describe("loadClassificationPrompt", () => {
     // The worker and the tests run from server/; the Next process runs from the
     // repository root. Resolving one cwd-relative path works in only one of them.
     const prompt = loadClassificationPrompt();
-    expect(prompt).toContain("transaction-classification v2");
+    expect(prompt).toContain("transaction-classification v3");
     expect(prompt).toContain("Abstention is correct");
   });
 });

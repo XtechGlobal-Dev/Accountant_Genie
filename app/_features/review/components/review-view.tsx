@@ -84,6 +84,7 @@ export function ReviewView({
   summary,
   accounts,
   subcontractors,
+  loans,
   bankAccounts,
 }: {
   clientId: string;
@@ -92,6 +93,7 @@ export function ReviewView({
   summary: ReviewSummary;
   accounts: AccountOption[];
   subcontractors: { id: string; name: string }[];
+  loans: { id: string; name: string }[];
   bankAccounts: { id: string; name: string }[];
 }) {
   const router = useRouter();
@@ -157,6 +159,8 @@ export function ReviewView({
       },
     );
 
+  // The engine runs as a job — it makes AI calls and holds a long transaction
+  // — so the button queues it and the Activity Panel shows the run.
   const reconcile = () =>
     run(
       () => runReconciliation(clientId),
@@ -165,13 +169,13 @@ export function ReviewView({
           setNotice({ tone: "negative", text: result.error });
           return;
         }
-        const s = result.stats;
         setNotice({
-          tone: s.aiFailure ? "warning" : "positive",
-          text:
-            `${s.processed} coded — ${s.byMemory} by memory, ${s.byRule} by rules, ${s.byAi} by AI; ${s.needsReview} need a look` +
-            (s.aiFailure ? ` · AI tier: ${s.aiFailure}` : ""),
+          tone: "positive",
+          text: result.existed
+            ? "A reconciliation run is already queued for this client — watch it in the Activity Panel"
+            : "Reconciliation queued — watch it in the Activity Panel; this list refreshes when it finishes",
         });
+        window.dispatchEvent(new CustomEvent("ledgerly:open-activity", { detail: { jobId: result.jobId } }));
       },
     );
 
@@ -553,6 +557,7 @@ export function ReviewView({
           transaction={recode}
           accounts={accounts}
           subcontractors={subcontractors}
+          loans={loans}
           onClose={() => setRecode(null)}
         />
       ) : null}

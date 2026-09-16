@@ -5,7 +5,6 @@ import { requireSession } from "@/server/core/session";
 import { can, forbidden } from "@/server/core/permissions";
 import { invalid } from "@/server/core/result";
 import type { ActionResult } from "@/shared/contracts/result";
-import type { ReconcileStats } from "@/shared/contracts/transaction";
 import { ExcludeSchema, IdListSchema, MemoryRuleUpdateSchema, RecodeSchema } from "./schema";
 import * as service from "./service";
 
@@ -16,16 +15,21 @@ function revalidateClient(clientId: string) {
   revalidatePath("/memory");
 }
 
+/**
+ * Queue a reconciliation run. The engine never runs inside a request — it
+ * makes AI calls and holds a long transaction — so this returns a job id and
+ * the Activity Panel shows the run.
+ */
 export async function runReconciliation(
   clientId: string,
-): Promise<{ ok: true; stats: ReconcileStats } | { ok: false; error: string }> {
+): Promise<{ ok: true; jobId: string; existed: boolean } | { ok: false; error: string }> {
   const session = await requireSession();
   if (!can(session, "transaction:update")) return forbidden();
   const { firmId, userId } = session;
-  const stats = await service.runReconciliation(firmId, userId, clientId);
-  if (!stats) return { ok: false, error: "Client not found" };
+  const job = await service.queueReconciliation(firmId, userId, clientId);
+  if (!job) return { ok: false, error: "Client not found" };
   revalidateClient(clientId);
-  return { ok: true, stats };
+  return { ok: true, ...job };
 }
 
 export async function recodeTransaction(

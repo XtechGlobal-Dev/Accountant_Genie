@@ -38,7 +38,7 @@ export async function createClient(formData: FormData): Promise<ActionResult> {
   const parsed = createClientFromForm(formData);
   if (!parsed.success) return invalid(parsed.error);
 
-  const client = await service.createClient(firmId, parsed.data);
+  const client = await service.createClient(firmId, session.userId, parsed.data);
 
   revalidatePath("/clients");
   return ok(client.id);
@@ -50,13 +50,16 @@ export async function updateClient(
 ): Promise<ActionResult> {
   const session = await requireSession();
   if (!can(session, "client:update")) return forbidden();
-  const { firmId } = session;
+  const { firmId, userId } = session;
 
   const parsed = updateClientFromForm(formData);
   if (!parsed.success) return invalid(parsed.error);
 
-  const updated = await service.updateClient(firmId, clientId, parsed.data);
-  if (!updated) return notFound("Client");
+  const outcome = await service.updateClient(firmId, userId, clientId, parsed.data);
+  if (outcome === "not_found") return notFound("Client");
+  if (outcome === "conflict") {
+    return { ok: false, error: "Someone else changed this client while you were editing it. Reload and try again." };
+  }
 
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId}`);
@@ -69,9 +72,9 @@ export async function setClientArchived(
 ): Promise<ActionResult> {
   const session = await requireSession();
   if (!can(session, "client:archive")) return forbidden();
-  const { firmId } = session;
+  const { firmId, userId } = session;
 
-  const updated = await service.setClientArchived(firmId, clientId, archived);
+  const updated = await service.setClientArchived(firmId, userId, clientId, archived);
   if (!updated) return notFound("Client");
 
   revalidatePath("/clients");
@@ -84,12 +87,12 @@ export async function addClientNote(
 ): Promise<ActionResult> {
   const session = await requireSession();
   if (!can(session, "client:update")) return forbidden();
-  const { firmId } = session;
+  const { firmId, userId } = session;
 
   const parsed = clientNoteFromForm(formData);
   if (!parsed.success) return invalid(parsed.error);
 
-  const added = await service.addClientNote(firmId, clientId, parsed.data);
+  const added = await service.addClientNote(firmId, userId, clientId, parsed.data);
   if (!added) return notFound("Client");
 
   revalidatePath(`/clients/${clientId}`);
@@ -134,7 +137,7 @@ export async function uploadClientLogo(clientId: string, formData: FormData): Pr
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose an image to upload", field: "logo" };
   if (file.size > LOGO_MAX_BYTES) return { ok: false, error: "The logo must be 2 MB or smaller", field: "logo" };
 
-  const result = await service.setClientLogo(firmId, clientId, new Uint8Array(await file.arrayBuffer()));
+  const result = await service.setClientLogo(firmId, session.userId, clientId, new Uint8Array(await file.arrayBuffer()));
   if (result.ok) revalidatePath(`/clients/${clientId}`, "layout");
   return result;
 }
@@ -142,9 +145,9 @@ export async function uploadClientLogo(clientId: string, formData: FormData): Pr
 export async function removeClientLogo(clientId: string): Promise<ActionResult> {
   const session = await requireSession();
   if (!can(session, "client:update")) return forbidden();
-  const { firmId } = session;
+  const { firmId, userId } = session;
 
-  const removed = await service.removeClientLogo(firmId, clientId);
+  const removed = await service.removeClientLogo(firmId, userId, clientId);
   if (!removed) return notFound("Client");
 
   revalidatePath(`/clients/${clientId}`, "layout");

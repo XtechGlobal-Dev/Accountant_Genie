@@ -58,20 +58,45 @@ describe("matchMemory", () => {
 });
 
 describe("scoreRisk", () => {
-  const config = { highRiskCents: 500_000 };
+  const config = { highRiskCents: 500_000, noveltyRiskCents: 50_000 };
 
   it("is low for a small, familiar operating expense", () => {
-    expect(scoreRisk({ amountCents: -8850, novel: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("LOW");
+    expect(scoreRisk({ amountCents: -8850, novel: false, inconsistent: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("LOW");
   });
 
   it("is high for large amounts, capital, balance-sheet postings and big novel merchants", () => {
-    expect(scoreRisk({ amountCents: -600_000, novel: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("HIGH");
-    expect(scoreRisk({ amountCents: -20_000, novel: false, gstTreatment: "GST_ON_CAPITAL", accountType: "ASSET" }, config)).toBe("HIGH");
-    expect(scoreRisk({ amountCents: -20_000, novel: false, gstTreatment: "BAS_EXCLUDED", accountType: "LIABILITY" }, config)).toBe("HIGH");
-    expect(scoreRisk({ amountCents: -60_000, novel: true, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("HIGH");
+    expect(scoreRisk({ amountCents: -600_000, novel: false, inconsistent: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("HIGH");
+    expect(scoreRisk({ amountCents: -20_000, novel: false, inconsistent: false, gstTreatment: "GST_ON_CAPITAL", accountType: "ASSET" }, config)).toBe("HIGH");
+    expect(scoreRisk({ amountCents: -20_000, novel: false, inconsistent: false, gstTreatment: "BAS_EXCLUDED", accountType: "LIABILITY" }, config)).toBe("HIGH");
+    expect(scoreRisk({ amountCents: -60_000, novel: true, inconsistent: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("HIGH");
   });
 
   it("tolerates a small novel merchant", () => {
-    expect(scoreRisk({ amountCents: -2_000, novel: true, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("LOW");
+    expect(scoreRisk({ amountCents: -2_000, novel: true, inconsistent: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("LOW");
+  });
+});
+
+describe("scoreRisk — history", () => {
+  const config = { highRiskCents: 500_000, noveltyRiskCents: 50_000 };
+  it("treats a proposal that contradicts a reviewed coding of the same merchant as high risk", () => {
+    expect(scoreRisk({ amountCents: -1_000, novel: false, inconsistent: true, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("HIGH");
+  });
+  it("reads the novelty threshold from configuration, not a divisor of the amount threshold", () => {
+    expect(scoreRisk({ amountCents: -49_900, novel: true, inconsistent: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("LOW");
+    expect(scoreRisk({ amountCents: -50_000, novel: true, inconsistent: false, gstTreatment: "GST_ON_EXPENSES", accountType: "EXPENSE" }, config)).toBe("HIGH");
+  });
+});
+
+describe("matchMemory — evidence", () => {
+  it("prefers the rule more corrections have taught when everything else ties", () => {
+    const weak = { id: "weak", clientId: "c1", matchType: "EXACT" as const, pattern: "bunnings", accountId: "a1", gstTreatment: "GST_ON_EXPENSES" as const, evidenceCount: 1 };
+    const strong = { ...weak, id: "strong", accountId: "a2", evidenceCount: 7 };
+    expect(matchMemory([weak, strong], "bunnings")?.id).toBe("strong");
+    expect(matchMemory([strong, weak], "bunnings")?.id).toBe("strong");
+  });
+  it("never lets evidence outrank scope, exactness or specificity", () => {
+    const firmWideStrong = { id: "firm", clientId: null, matchType: "EXACT" as const, pattern: "bunnings", accountId: "a1", gstTreatment: "GST_ON_EXPENSES" as const, evidenceCount: 99 };
+    const clientWeak = { ...firmWideStrong, id: "client", clientId: "c1", evidenceCount: 1 };
+    expect(matchMemory([firmWideStrong, clientWeak], "bunnings")?.id).toBe("client");
   });
 });

@@ -31,7 +31,7 @@ const TYPE_ORDER: AccountType[] = [
   "EQUITY",
 ];
 
-type Row = Awaited<ReturnType<typeof repo.listAccounts>>[number];
+type Row = repo.AccountRow;
 
 function scopeOf(row: Pick<Row, "firmId" | "clientId">): AccountScope {
   if (row.firmId === null) return "SYSTEM";
@@ -52,8 +52,13 @@ function toRow(row: Row): ChartAccountRow {
     clientId: row.clientId,
     clientName: row.client?.businessName ?? null,
     postingCount: row._count.journalLines,
-    requiresVerification: row.requiresVerification,
+    // The seed's flag, cleared FOR THIS FIRM by its own advisor's sign-off.
+    // The shared row is never written, so no firm can clear it for another.
+    requiresVerification: row.requiresVerification && row.verifications.length === 0,
     taxNote: row.taxNote,
+    verifiedBy: row.verifications[0]?.verifiedBy?.name ?? null,
+    verifiedAt: row.verifications[0]?.verifiedAt ?? null,
+    version: row.version,
   };
 }
 
@@ -279,15 +284,24 @@ export async function updateCustomAccount(
     };
   }
 
-  await db.$transaction(async (tx) => {
-    await repo.updateAccount(tx, existing.id, {
-      clientId: scope.clientId,
-      code: input.code,
-      name: input.name,
-      type: input.type,
-      gstTreatment: input.gstTreatment,
-      description: input.description || null,
-    });
+  // Optimistic: the write carries the version the form was opened with. Zero
+  // rows means a colleague saved first, and their edit is kept, not merged over.
+  const conflict = await db.$transaction(async (tx) => {
+    const written = await repo.updateOwnedAccount(
+      tx,
+      firmId,
+      existing.id,
+      {
+        clientId: scope.clientId,
+        code: input.code,
+        name: input.name,
+        type: input.type,
+        gstTreatment: input.gstTreatment,
+        description: input.description || null,
+      },
+      input.version,
+    );
+    if (written === 0) return true;
     await recordAudit(tx, {
       firmId,
       userId,
@@ -310,15 +324,23 @@ export async function updateCustomAccount(
         clientId: scope.clientId,
       },
     });
+    return false;
   });
+  if (conflict) {
+    return { ok: false, error: "Someone else changed this account while you were editing it. Reload and try again." };
+  }
 
   return { ok: true, id: existing.id };
 }
 
 /**
- * The registered tax advisor signs off a tax treatment. Clears the flag and
- * records who, when and what the treatment was at the time. The caller has
- * already checked the person is a tax agent.
+ * The firm's registered tax advisor signs off a tax treatment — for this firm.
+ *
+ * The sign-off is a per-firm `AccountVerification` row. The account itself,
+ * which for a system account is shared by every firm on the platform, is
+ * never written: one firm's advisor clearing a flag that another firm's
+ * reports then relied on was a cross-tenant write, and this is the fix. The
+ * caller has already checked the person is a tax agent with `tax:verify`.
  */
 export async function verifyAccountTreatment(
   firmId: string,
@@ -329,21 +351,24 @@ export async function verifyAccountTreatment(
   const account = await repo.findVisibleAccount(firmId, accountId);
   if (!account) return { ok: false, error: "Account not found" };
   if (!account.requiresVerification) return { ok: true, id: account.id };
+  if (account.verifications.length > 0) return { ok: true, id: account.id };
 
   await db.$transaction(async (tx) => {
-    await repo.updateAccount(tx, account.id, {
-      requiresVerification: false,
-      taxNote: note ? `Verified: ${note}` : `Verified — ${account.taxNote ?? "treatment confirmed"}`,
+    const verification = await repo.upsertVerification(tx, {
+      firmId,
+      accountId: account.id,
+      verifiedById: userId,
+      note,
     });
     await recordAudit(tx, {
       firmId,
       userId,
       clientId: account.clientId,
       action: "ACCOUNT_VERIFIED",
-      entityType: "Account",
-      entityId: account.id,
-      before: { gstTreatment: account.gstTreatment, taxNote: account.taxNote },
-      after: { gstTreatment: account.gstTreatment, note },
+      entityType: "AccountVerification",
+      entityId: verification.id,
+      before: { accountId: account.id, gstTreatment: account.gstTreatment, taxNote: account.taxNote },
+      after: { accountId: account.id, gstTreatment: account.gstTreatment, note },
     });
   });
   return { ok: true, id: account.id };
@@ -364,7 +389,7 @@ export async function setCustomAccountActive(
   if (existing.isActive === active) return { ok: true, id: existing.id };
 
   await db.$transaction(async (tx) => {
-    await repo.updateAccount(tx, existing.id, { isActive: active });
+    await repo.updateOwnedAccount(tx, firmId, existing.id, { isActive: active });
     await recordAudit(tx, {
       firmId,
       userId,

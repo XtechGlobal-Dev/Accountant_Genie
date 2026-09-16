@@ -3,9 +3,15 @@ import { randomBytes, scrypt } from "node:crypto";
 import { PrismaClient } from "../generated/prisma/client.js";
 import { syncSystemAccounts } from "./accounts-sync.js";
 import { gstFromGross, naturalGross } from "../src/au/gst.js";
+import { seedProposals } from "../src/modules/tax-rules/catalogue.js";
 import type { GstTreatment } from "../generated/prisma/client.js";
 
-process.loadEnvFile(".env");
+// The environment may already be set (CI, a host): a missing .env is not an error.
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // .env is absent — the environment is expected to provide the variables.
+}
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const db = new PrismaClient({ adapter });
@@ -223,7 +229,7 @@ async function main() {
   console.log(`  user     ${user.name} <${user.email}>  password: ${demoPassword}`);
 
   // -------------------------------------------------- Chart of accounts
-  const { created, updated, deleted, deactivated } = await syncSystemAccounts((line) =>
+  const { created, updated, deleted, deactivated } = await syncSystemAccounts(db, (line) =>
     console.log(line),
   );
   console.log(
@@ -251,7 +257,7 @@ async function main() {
       gstRegistered: true,
       gstBasis: "CASH",
       basFrequency: "QUARTERLY",
-      incomeTaxRate: 25,
+      incomeTaxRatePercent: 25,
     },
   });
   console.log(`  client   ${horizon.businessName} (Company)`);
@@ -351,30 +357,25 @@ async function main() {
 
   // ------------------------------------------------------------ Tax rules
   // Mapping proposals only, never figures: each sits as PENDING_VERIFICATION
-  // until the registered tax advisor signs it off under Settings → Tax rules.
-  const proposals = [
-    { code: "DEPRECIATION_METHODS", label: "Depreciation method rates", valueText: "PRIME_COST=100%/life; DIMINISHING_VALUE=200%/life" },
-    { code: "BAS_W1_ACCOUNTS", label: "BAS W1 — wages accounts", valueText: "325,477" },
-    { code: "BAS_W2_ACCOUNT", label: "BAS W2 — PAYG withholding account", valueText: "825" },
-    { code: "INTEREST_INCOME_TREATMENT", label: "Interest income tax treatment", valueText: "INPUT_TAXED" },
-  ];
+  // for THIS firm until its registered tax advisor signs it off under
+  // Settings → Tax rules. Rules are firm-scoped; the demo firm gets its own.
+  const existingCodes = new Set(
+    (await db.taxRuleVersion.findMany({ where: { firmId: firm.id }, select: { code: true }, distinct: ["code"] })).map((r) => r.code),
+  );
   let proposed = 0;
-  for (const rule of proposals) {
-    const exists = await db.taxRuleVersion.findFirst({ where: { code: rule.code }, select: { id: true } });
-    if (exists) continue;
-    await db.taxRuleVersion.create({
-      data: {
-        code: rule.code,
-        label: rule.label,
-        description: "Seeded proposal — verify or replace before relying on it.",
-        valueText: rule.valueText,
-        effectiveFrom: new Date("2000-07-01T00:00:00.000Z"),
-        note: "Proposed by the seed from the chart of accounts. Not a tax opinion.",
-      },
-    });
+  for (const proposal of seedProposals()) {
+    if (existingCodes.has(proposal.code)) {
+      // Unverified proposals follow the catalogue (the chart's codes moved); verified versions are never touched.
+      await db.taxRuleVersion.updateMany({
+        where: { firmId: firm.id, code: proposal.code, status: "PENDING_VERIFICATION", valueText: { not: proposal.valueText }, note: proposal.note },
+        data: { valueText: proposal.valueText, label: proposal.label, description: proposal.description },
+      });
+      continue;
+    }
+    await db.taxRuleVersion.create({ data: { firmId: firm.id, ...proposal } });
     proposed += 1;
   }
-  console.log(`  tax rules ${proposed} proposals pending verification (${proposals.length - proposed} already present)`);
+  console.log(`  tax rules ${proposed} proposals pending verification (${seedProposals().length - proposed} already present)`);
 
   // ------------------------------------------------------------ Journals
   const posted = await seedJournals(horizon.id, user.id);

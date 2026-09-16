@@ -107,10 +107,30 @@ export async function handleWebhook(rawBody: string, signature: string | null): 
     return { status: 400, body: "Invalid signature" };
   }
 
-  const seen = await db.webhookEvent.findUnique({ where: { id: event.id }, select: { id: true } });
-  if (seen) return { status: 200, body: "Already processed" };
-  await db.webhookEvent.create({ data: { id: event.id, provider: "stripe", type: event.type } });
+  // The replay guard is the primary key, not a read-then-write: two
+  // simultaneous deliveries of one event race to insert, and the database
+  // decides which one processes it. The same pattern as the Fiskil receiver.
+  try {
+    await db.webhookEvent.create({ data: { id: event.id, provider: "stripe", type: event.type }, select: { id: true } });
+  } catch {
+    return { status: 200, body: "Already processed" };
+  }
 
+  try {
+    await applyEvent(event);
+  } catch (error) {
+    // Recorded on the event, and NOT marked processed, so a crash inside the
+    // plan change leaves a visible, unprocessed event rather than one every
+    // Stripe retry short-circuits past.
+    const message = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+    await db.webhookEvent.update({ where: { id: event.id }, data: { error: message } }).catch(() => undefined);
+    return { status: 500, body: "Processing failed; Stripe will retry" };
+  }
+  await db.webhookEvent.update({ where: { id: event.id }, data: { processedAt: new Date() } });
+  return { status: 200, body: "ok" };
+}
+
+async function applyEvent(event: Stripe.Event): Promise<void> {
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object;
@@ -133,7 +153,6 @@ export async function handleWebhook(rawBody: string, signature: string | null): 
     default:
       break;
   }
-  return { status: 200, body: "ok" };
 }
 
 async function applyPlan(

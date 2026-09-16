@@ -21,7 +21,7 @@ function valueOf(version: TaxRuleVersionView): string {
   return version.valueText ?? "—";
 }
 
-export function TaxRulesView({ rules, isTaxAgent, canPropose }: { rules: TaxRuleView[]; isTaxAgent: boolean; canPropose: boolean }) {
+export function TaxRulesView({ rules, canVerify, canPropose }: { rules: TaxRuleView[]; canVerify: boolean; canPropose: boolean }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [proposing, setProposing] = useState<TaxRuleView | null>(null);
@@ -43,9 +43,9 @@ export function TaxRulesView({ rules, isTaxAgent, canPropose }: { rules: TaxRule
         title="Tax rules"
         context="Every rule the software depends on, versioned with effective dates. A value is applied only once a registered tax agent has verified it."
       />
-      {!isTaxAgent ? (
+      {!canVerify ? (
         <Alert tone="info">
-          Verification is reserved for a registered tax agent. {canPropose ? "You can propose a value for one to sign off." : ""}
+          Verification is reserved for a registered tax agent with verification rights, and applies to this firm only. {canPropose ? "You can propose a value for one to sign off." : ""}
         </Alert>
       ) : null}
       {error ? <Alert tone="negative">{error}</Alert> : null}
@@ -65,7 +65,7 @@ export function TaxRulesView({ rules, isTaxAgent, canPropose }: { rules: TaxRule
             }
             description={rule.description}
             action={
-              canPropose || isTaxAgent ? (
+              canPropose ? (
                 <Button variant="secondary" size="sm" icon="plus" onClick={() => setProposing(rule)}>
                   Propose version
                 </Button>
@@ -107,7 +107,7 @@ export function TaxRulesView({ rules, isTaxAgent, canPropose }: { rules: TaxRule
                     </td>
                     <td className="text-ink-2">{version.note ?? "—"}</td>
                     <td className="text-right">
-                      {version.status === "PENDING_VERIFICATION" && isTaxAgent ? (
+                      {version.status === "PENDING_VERIFICATION" && canVerify ? (
                         <Button variant="soft" size="sm" icon="shield-check" disabled={busy === version.id} onClick={() => verify(version)}>
                           Verify
                         </Button>

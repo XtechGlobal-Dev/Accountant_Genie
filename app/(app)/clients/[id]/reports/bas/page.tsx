@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/server/core/session";
+import { can } from "@/server/core/permissions";
 import { getClientHeader } from "@/server/modules/clients/service";
-import { getSimpleBas } from "@/server/modules/reports/service";
+import { getSimpleBas, listBasStatements } from "@/server/modules/reports/service";
+import { BasStatementsList, PrepareBasButton } from "@/features/reports/components/bas-statements";
 import { resolvePeriod } from "@/server/modules/reports/period";
 import { recentFinancialYears } from "@/server/au/fy";
 import { shortDate } from "@/shared/format";
@@ -105,14 +107,18 @@ export default async function BasPage({
 }) {
   const { id } = await params;
   const query = await searchParams;
-  const { firmId } = await requireSession();
+  const session = await requireSession();
+  const { firmId } = session;
+  // Preparing a BAS for a fee is regulated conduct; reading one needs the
+  // permission that says this person is part of that work.
+  if (!can(session, "bas:prepare")) notFound();
 
   const client = await getClientHeader(firmId, id);
   if (!client) notFound();
 
   const period = resolvePeriod(query);
-  const report = await getSimpleBas(firmId, client.id, period);
-  if (!report) notFound();
+  const [report, statements] = await Promise.all([getSimpleBas(firmId, client.id, period), listBasStatements(firmId, client.id)]);
+  if (!report || !statements) notFound();
 
   const { bas } = report;
   const basePath = `/clients/${id}/reports/bas`;
@@ -124,6 +130,7 @@ export default async function BasPage({
       <div data-print-hide className="flex flex-wrap items-center justify-between gap-3">
         <PeriodPicker basePath={basePath} period={period} financialYears={recentFinancialYears(6)} />
         <span className="flex flex-wrap items-center gap-2">
+          <PrepareBasButton clientId={id} query={query} canPrepare={can(session, "bas:prepare")} ready={bas.unresolvedCount === 0} />
           <ReportActions filename="bas" />
           <ButtonLink variant="secondary" icon="arrow-left" href={`/clients/${id}/reports`}>
             All reports
@@ -162,6 +169,14 @@ export default async function BasPage({
         </Alert>
       ) : null}
 
+      {bas.inputTaxedOmittedCount > 0 ? (
+        <Alert tone="warning" title={`${bas.inputTaxedOmittedCount} input-taxed line${bas.inputTaxedOmittedCount === 1 ? "" : "s"} left out of G1 and G11`}>
+          Whether input-taxed sales count at G1 and input-taxed purchases at G11 is a rule the
+          registered tax advisor verifies under Settings → Tax rules. Until then those lines contribute
+          to no label — G1 and G11 are understated by that much. 1A and 1B are unaffected.
+        </Alert>
+      ) : null}
+
       <div className="card flex flex-wrap items-center justify-between gap-4 bg-accent-soft/60 px-5 py-4">
         <div>
           <p className="text-sm font-semibold">Net GST for the period</p>
@@ -182,6 +197,8 @@ export default async function BasPage({
         time, never re-estimated. Shown in dollars and cents; the ATO form takes whole dollars. This
         statement is prepared for review and is not lodged from here.
       </p>
+
+      <BasStatementsList clientId={id} statements={statements} />
     </div>
   );
 }

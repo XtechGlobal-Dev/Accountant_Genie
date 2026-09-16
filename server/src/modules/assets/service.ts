@@ -6,7 +6,8 @@ import * as accounts from "@/server/modules/accounts/repository";
 import * as clients from "@/server/modules/clients/repository";
 import type { ActionResult } from "@/shared/contracts/result";
 import type { AssetRow, DepreciationSchedule } from "@/shared/contracts/register";
-import { currentRule } from "@/server/modules/tax-rules/service";
+import { currentRule, parseDepreciationMethods } from "@/server/modules/tax-rules/service";
+import { STATUTORY_DEPRECIATION_RATES } from "@/server/modules/tax-rules/catalogue";
 import { financialYearRange } from "@/server/au/fy";
 import { depreciationSchedule, type VerifiedThresholds } from "./depreciation";
 import * as repo from "./repository";
@@ -56,14 +57,40 @@ export async function listAssets(firmId: string, clientId: string): Promise<Asse
   return rows.map((row) => toRow(row, names));
 }
 
-/** Thresholds verified for the year — absent when the advisor has not signed them off. */
-export async function verifiedThresholds(fy: number): Promise<VerifiedThresholds & { verified: { writeOff: boolean; carLimit: boolean } }> {
+export interface ThresholdVerification {
+  writeOff: boolean;
+  carLimit: boolean;
+  /** Whether the method rates come from a verified rule or the statutory fallback. */
+  methods: boolean;
+}
+
+/**
+ * Thresholds verified for the year by THIS firm's advisor — absent when they
+ * have not signed them off. The method rates are the one figure the schedule
+ * cannot do without: with no verified version it uses the statutory rates
+ * and the report says so, rather than showing no depreciation at all.
+ */
+export async function verifiedThresholds(
+  firmId: string,
+  fy: number,
+): Promise<VerifiedThresholds & { verified: ThresholdVerification; ruleVersions: Record<string, string | null> }> {
   const asAt = new Date(financialYearRange(fy).end.getTime() - 1);
-  const [writeOff, carLimit] = await Promise.all([currentRule("INSTANT_ASSET_WRITE_OFF", asAt), currentRule("CAR_LIMIT", asAt)]);
+  const [writeOff, carLimit, methods] = await Promise.all([
+    currentRule(firmId, "INSTANT_ASSET_WRITE_OFF", asAt),
+    currentRule(firmId, "CAR_LIMIT", asAt),
+    currentRule(firmId, "DEPRECIATION_METHODS", asAt),
+  ]);
+  const rates = parseDepreciationMethods(methods?.valueText);
   return {
     instantWriteOffCents: writeOff?.valueCents ?? null,
     carLimitCents: carLimit?.valueCents ?? null,
-    verified: { writeOff: writeOff !== null, carLimit: carLimit !== null },
+    rates: rates ?? STATUTORY_DEPRECIATION_RATES,
+    verified: { writeOff: writeOff !== null, carLimit: carLimit !== null, methods: rates !== null },
+    ruleVersions: {
+      INSTANT_ASSET_WRITE_OFF: writeOff?.id ?? null,
+      CAR_LIMIT: carLimit?.id ?? null,
+      DEPRECIATION_METHODS: methods?.id ?? null,
+    },
   };
 }
 
@@ -74,8 +101,13 @@ export async function getDepreciationSchedule(
 ): Promise<DepreciationSchedule | null> {
   const client = await clients.findOwnedClientId(firmId, clientId);
   if (!client) return null;
-  const [rows, thresholds] = await Promise.all([repo.list(firmId, client.id), verifiedThresholds(fy)]);
-  return depreciationSchedule(rows, fy, thresholds);
+  const [rows, thresholds] = await Promise.all([repo.list(firmId, client.id), verifiedThresholds(firmId, fy)]);
+  return {
+    ...depreciationSchedule(rows, fy, thresholds),
+    thresholds: { writeOffCents: thresholds.instantWriteOffCents ?? null, carLimitCents: thresholds.carLimitCents ?? null },
+    methodsVerified: thresholds.verified.methods,
+    ruleVersions: thresholds.ruleVersions,
+  };
 }
 
 async function resolveAccount(

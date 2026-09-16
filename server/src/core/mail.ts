@@ -24,10 +24,31 @@ export interface MailTransport {
   send(message: MailMessage): Promise<void>;
 }
 
+/** "j***@example.com" — enough to recognise, not enough to harvest. */
+function maskEmail(email: string): string {
+  const [local = "", domain = ""] = email.split("@");
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
+/**
+ * The console transport is a development convenience, and it prints one-time
+ * codes and temporary passwords. That is acceptable on a developer's own
+ * machine and never in production, where a server log is shared, retained and
+ * shipped elsewhere. So: outside production the whole message is printed;
+ * in production the body is withheld, the recipient is masked, and the log
+ * says loudly that no mail provider is configured.
+ */
 class ConsoleTransport implements MailTransport {
   readonly name = "console";
   async send(message: MailMessage): Promise<void> {
     const line = "-".repeat(64);
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        `[mail] No mail provider is configured (RESEND_API_KEY / MAIL_FROM). ` +
+          `A message to ${maskEmail(message.to)} ("${message.subject}") was NOT sent and its body is withheld from this log.`,
+      );
+      return;
+    }
     console.info(`\n${line}\n[mail → ${message.to}] ${message.subject}\n${message.text}\n${line}\n`);
   }
 }

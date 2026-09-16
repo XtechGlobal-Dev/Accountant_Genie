@@ -4,12 +4,17 @@ import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
 import { CODE_CASH_AT_BANK, CODE_CREDIT_CARD } from "@/server/au/coa";
 import { gstFromGross } from "@/server/au/gst";
+import { CODE_INTEREST_CHARGED, CODE_LOAN_PRINCIPAL } from "@/server/au/coa";
+import { enqueue } from "@/server/jobs/queue";
 import * as accountsRepo from "@/server/modules/accounts/repository";
 import * as clients from "@/server/modules/clients/repository";
 import * as ledgerRepo from "@/server/modules/ledger/repository";
-import { postBankTransactionInTx, reversalLines } from "@/server/modules/ledger/service";
+import { postBankTransactionInTx, reversalLines, type BankAllocation } from "@/server/modules/ledger/service";
+import { loanSchedule } from "@/server/modules/loans/amortisation";
+import * as loansRepo from "@/server/modules/loans/repository";
+import * as subcontractors from "@/server/modules/subcontractors/repository";
 import { treatmentAllowedFor } from "@/shared/account-rules";
-import type { AccountType } from "@/shared/enums";
+import type { AccountType, GstTreatment } from "@/shared/enums";
 import type { ActionResult } from "@/shared/contracts/result";
 import type {
   MemoryRuleRow,
@@ -28,6 +33,10 @@ import { shareCategoryCorrection } from "@/server/modules/banking/category-feedb
  * Accepting a transaction is the only path from a bank row to the ledger, and
  * it runs the same gate the engine ran — an account can be deactivated
  * between coding and acceptance, and the ledger must not find out later.
+ *
+ * Edits are optimistic: the row version the screen showed travels with the
+ * edit, and a stale one is refused with a conflict rather than merged over a
+ * colleague's correction.
  */
 
 /**
@@ -37,6 +46,10 @@ import { shareCategoryCorrection } from "@/server/modules/banking/category-feedb
  * chart cannot leave these pointing at codes that now mean something else.
  */
 const BANK_LEDGER_CODE = { BANK: CODE_CASH_AT_BANK, CREDIT_CARD: CODE_CREDIT_CARD } as const;
+
+const CONFLICT = "Someone else changed this transaction while you were editing it. Reload and try again.";
+
+class ConflictError extends Error {}
 
 type Row = Awaited<ReturnType<typeof repo.listTransactions>>[number];
 
@@ -68,6 +81,8 @@ function toRow(row: Row): TransactionRow {
     excludeReason: row.excludeReason,
     memoryRuleId: row.memoryRuleId,
     subcontractorId: row.subcontractorId,
+    loanId: row.loanId,
+    version: row.version,
   };
 }
 
@@ -97,7 +112,35 @@ export async function getReviewSummary(
 /* The engine                                                                 */
 /* -------------------------------------------------------------------------- */
 
-/** Code everything not yet coded for this client. `null` = client not owned. */
+/**
+ * Code everything not yet coded for this client — as a background job, never
+ * in a request: a run makes AI calls and holds a long transaction, and the
+ * Activity Panel is where its progress belongs. The idempotency key is
+ * bucketed to the minute so a double-click enqueues one run, not two.
+ * `null` = client not owned.
+ */
+export async function queueReconciliation(
+  firmId: string,
+  userId: string,
+  clientId: string,
+  transactionIds?: readonly string[],
+): Promise<{ jobId: string; existed: boolean } | null> {
+  const client = await clients.findOwnedClientId(firmId, clientId);
+  if (!client) return null;
+  const minute = Math.floor(Date.now() / 60_000);
+  const subset = transactionIds && transactionIds.length > 0 ? [...new Set(transactionIds)].sort() : null;
+  const job = await enqueue({
+    type: "RECONCILE_CLIENT",
+    firmId,
+    clientId: client.id,
+    inputReference: subset ? JSON.stringify(subset) : null,
+    idempotencyKey: subset ? `reconcile:${client.id}:subset:${minute}:${subset.length}:${subset[0]}` : `reconcile:${client.id}:${minute}`,
+    createdById: userId,
+  });
+  return { jobId: job.id, existed: job.existed };
+}
+
+/** The engine, inline. For scripts and tests; the app enqueues. */
 export function runReconciliation(
   firmId: string,
   userId: string,
@@ -113,11 +156,13 @@ export function runReconciliation(
 type CreatableType = Exclude<AccountType, "UNKNOWN">;
 
 /**
- * Recode a transaction by hand. The account is resolved through the client's
- * chart; the treatment defaults to the account's own; GST is recomputed by
- * the engine. Optionally teaches Coding Memory, and re-codes any other open
+ * Recode a transaction by hand. The account, the subcontractor and the loan
+ * are each resolved through the client's own records — a request may name
+ * three resources and every one of them is ownership-checked. The treatment
+ * defaults to the account's own; GST is recomputed deterministically.
+ * Optionally teaches Coding Memory, and queues a re-code of any other open
  * transaction with the same normalised description so the flywheel is felt
- * immediately.
+ * across the whole file.
  */
 export async function recodeTransaction(
   firmId: string,
@@ -131,6 +176,7 @@ export async function recodeTransaction(
     return { ok: false, error: "Reopen this transaction before recoding it" };
   }
   if (t.excludedAt) return { ok: false, error: "Restore this transaction before recoding it" };
+  if (input.version !== undefined && input.version !== t.version) return { ok: false, error: CONFLICT };
 
   const clientId = t.bankAccount.clientId;
   const visible = await accountsRepo.resolveForClient(firmId, clientId, [input.accountId]);
@@ -146,75 +192,104 @@ export async function recodeTransaction(
     return { ok: false, error: "That tax code does not apply to this account", field: "gstTreatment" };
   }
 
+  // The second and third resources. A subcontractor or loan id from the
+  // request is only ever this client's own; anything else is "not found".
+  let subcontractorId: string | null = null;
+  if (input.subcontractorId) {
+    const known = await subcontractors.listOptions(firmId, clientId);
+    if (!known.some((s) => s.id === input.subcontractorId)) {
+      return { ok: false, error: "Subcontractor not found", field: "subcontractorId" };
+    }
+    subcontractorId = input.subcontractorId;
+  }
+  let loanId: string | null = null;
+  if (input.loanId) {
+    const loan = await loansRepo.findOwned(firmId, input.loanId);
+    if (!loan || loan.clientId !== clientId) return { ok: false, error: "Loan not found", field: "loanId" };
+    if (account.code !== CODE_LOAN_PRINCIPAL) {
+      return { ok: false, error: `A loan repayment is coded to ${CODE_LOAN_PRINCIPAL} Loan Account; the interest split happens when it is accepted`, field: "accountId" };
+    }
+    loanId = loan.id;
+  }
+
   const gstRegistered = t.bankAccount.client.gstRegistered;
   const gstCents = gstRegistered ? gstFromGross(t.amountCents, treatment) : 0;
   const pattern = (input.pattern ?? t.normalised).toLowerCase().trim();
 
-  await db.$transaction(async (tx) => {
-    let memoryRuleId: string | null = null;
+  try {
+    await db.$transaction(async (tx) => {
+      let memoryRuleId: string | null = null;
 
-    if (input.remember !== "NONE") {
-      const scopeClientId = input.remember === "CLIENT" ? clientId : null;
-      const existing = await repo.findMemoryRuleByPattern(firmId, scopeClientId, pattern);
-      if (existing) {
-        await repo.updateMemoryRule(tx, existing.id, {
-          matchType: input.matchType,
-          accountId: account.id,
-          gstTreatment: treatment,
-          evidenceCount: { increment: 1 },
-        });
-        memoryRuleId = existing.id;
-      } else {
-        const created = await repo.createMemoryRule(tx, {
+      if (input.remember !== "NONE") {
+        const scopeClientId = input.remember === "CLIENT" ? clientId : null;
+        const existing = await repo.findMemoryRuleByPattern(firmId, scopeClientId, pattern);
+        if (existing) {
+          await repo.updateMemoryRule(tx, existing.id, {
+            matchType: input.matchType,
+            accountId: account.id,
+            gstTreatment: treatment,
+            evidenceCount: { increment: 1 },
+          });
+          memoryRuleId = existing.id;
+        } else {
+          const created = await repo.createMemoryRule(tx, {
+            firmId,
+            clientId: scopeClientId,
+            pattern,
+            matchType: input.matchType,
+            accountId: account.id,
+            gstTreatment: treatment,
+            createdById: userId,
+          });
+          memoryRuleId = created.id;
+        }
+        await recordAudit(tx, {
           firmId,
+          userId,
           clientId: scopeClientId,
-          pattern,
-          matchType: input.matchType,
-          accountId: account.id,
-          gstTreatment: treatment,
-          createdById: userId,
+          action: existing ? "MEMORY_UPDATED" : "MEMORY_CREATED",
+          entityType: "MemoryRule",
+          entityId: memoryRuleId,
+          after: { pattern, matchType: input.matchType, accountId: account.id, gstTreatment: treatment, scope: input.remember },
         });
-        memoryRuleId = created.id;
       }
+
+      const written = await repo.updateTransactionIfVersion(tx, t.id, t.version, {
+        status: "CLASSIFIED",
+        accountId: account.id,
+        gstTreatment: treatment,
+        gstCents,
+        netCents: t.amountCents - gstCents,
+        source: "MANUAL",
+        confidence: 1,
+        reasoning: "Coded by hand",
+        needsReview: false,
+        memoryRuleId,
+        subcontractorId,
+        loanId,
+        aiMeta: { tier: "manual", decidedAt: new Date().toISOString() },
+      });
+      if (written === 0) throw new ConflictError(CONFLICT);
+
       await recordAudit(tx, {
         firmId,
         userId,
-        clientId: scopeClientId,
-        action: existing ? "MEMORY_UPDATED" : "MEMORY_CREATED",
-        entityType: "MemoryRule",
-        entityId: memoryRuleId,
-        after: { pattern, matchType: input.matchType, accountId: account.id, gstTreatment: treatment, scope: input.remember },
+        clientId,
+        action: "TRANSACTION_RECODED",
+        entityType: "BankTransaction",
+        entityId: t.id,
+        before: { accountId: t.accountId, gstTreatment: t.gstTreatment, gstCents: t.gstCents, subcontractorId: t.subcontractorId, loanId: t.loanId },
+        after: { accountId: account.id, gstTreatment: treatment, gstCents, subcontractorId, loanId },
       });
-    }
-
-    await repo.updateTransaction(tx, t.id, {
-      status: "CLASSIFIED",
-      accountId: account.id,
-      gstTreatment: treatment,
-      gstCents,
-      netCents: t.amountCents - gstCents,
-      source: "MANUAL",
-      confidence: 1,
-      reasoning: "Coded by hand",
-      needsReview: false,
-      memoryRuleId,
-      subcontractorId: input.subcontractorId || null,
     });
-
-    await recordAudit(tx, {
-      firmId,
-      userId,
-      clientId,
-      action: "TRANSACTION_RECODED",
-      entityType: "BankTransaction",
-      entityId: t.id,
-      before: { accountId: t.accountId, gstTreatment: t.gstTreatment, gstCents: t.gstCents },
-      after: { accountId: account.id, gstTreatment: treatment, gstCents },
-    });
-  });
+  } catch (error) {
+    if (error instanceof ConflictError) return { ok: false, error: CONFLICT };
+    throw error;
+  }
 
   // Apply the new rule to everything else still open with the same
-  // description — the correction should be felt across the whole file.
+  // description — as a job, so a common narration on a 10,000-row file is
+  // never an unbounded reclassification inside one request.
   if (input.remember !== "NONE") {
     const siblings = await db.bankTransaction.findMany({
       where: {
@@ -226,9 +301,10 @@ export async function recodeTransaction(
         normalised: input.matchType === "EXACT" ? pattern : { contains: pattern },
       },
       select: { id: true },
+      take: 500,
     });
     if (siblings.length > 0) {
-      await runEngine(firmId, userId, clientId, siblings.map((s) => s.id));
+      await queueReconciliation(firmId, userId, clientId, siblings.map((s) => s.id));
     }
   }
 
@@ -249,10 +325,37 @@ export interface AcceptOutcome {
   skipped: { id: string; reason: string }[];
 }
 
+type Acceptable = Awaited<ReturnType<typeof repo.findOwnedTransactions>>[number];
+
+/**
+ * How a repayment splits when the transaction is linked to a loan and coded
+ * to the loan account: the interest the amortisation schedule expects for
+ * the period the repayment falls in, the rest to principal. Deterministic
+ * and reproducible from the loan's terms; never expensing the whole payment.
+ */
+function loanAllocations(
+  t: Acceptable,
+  interestAccount: { id: string; gstTreatment: GstTreatment },
+  principalAccountId: string,
+): BankAllocation[] {
+  const magnitude = Math.abs(t.amountCents);
+  if (!t.loan || t.loan.status !== "ACTIVE") return [{ accountId: principalAccountId, cents: magnitude, gstTreatment: "BAS_EXCLUDED" }];
+  const schedule = loanSchedule(t.loan, t.date);
+  const due = [...schedule.rows].reverse().find((row) => row.date <= t.date) ?? schedule.rows[0];
+  const interest = Math.max(0, Math.min(magnitude, due?.interestCents ?? 0));
+  return [
+    { accountId: principalAccountId, cents: magnitude - interest, gstTreatment: "BAS_EXCLUDED", description: "Principal" },
+    // The interest account's own default treatment — whether the chart says
+    // input taxed or GST-free is the advisor's call, and never GST on expenses.
+    { accountId: interestAccount.id, cents: interest, gstTreatment: interestAccount.gstTreatment, description: "Interest" },
+  ];
+}
+
 /**
  * Sign off transactions and post them. Each one is validated on its own and
  * either posts or is skipped with a reason — one bad row never blocks the
- * rest, and never corrupts the batch.
+ * rest, and never corrupts the batch. Every posting also records one usage
+ * event, idempotent on the transaction, so a retry counts once.
  */
 export async function acceptTransactions(
   firmId: string,
@@ -263,8 +366,11 @@ export async function acceptTransactions(
   const found = new Map(rows.map((r) => [r.id, r]));
   const outcome: AcceptOutcome = { accepted: 0, skipped: [] };
 
-  const cashAccount = await repo.findSystemAccountByCode(BANK_LEDGER_CODE.BANK);
-  const cardAccount = await repo.findSystemAccountByCode(BANK_LEDGER_CODE.CREDIT_CARD);
+  const [cashAccount, cardAccount, interestAccount] = await Promise.all([
+    repo.findSystemAccountByCode(BANK_LEDGER_CODE.BANK),
+    repo.findSystemAccountByCode(BANK_LEDGER_CODE.CREDIT_CARD),
+    repo.findSystemAccountByCode(CODE_INTEREST_CHARGED),
+  ]);
 
   for (const id of ids) {
     const t = found.get(id);
@@ -304,36 +410,63 @@ export async function acceptTransactions(
 
     const accountId = t.accountId;
     const gstTreatment = t.gstTreatment;
-    await db.$transaction(async (tx) => {
-      const entryId = await postBankTransactionInTx(tx, firmId, userId, {
-        clientId: t.bankAccount.clientId,
-        date: t.date,
-        description: t.description,
-        bankLedgerAccountId: bankLedger.id,
-        accountId,
-        amountCents: t.amountCents,
-        gstTreatment,
-        gstRegistered: t.bankAccount.client.gstRegistered,
-        subcontractorId: t.subcontractorId,
-        bankTransactionId: t.id,
-      });
-      await repo.updateTransaction(tx, t.id, {
+    const isLoanRepayment = t.loanId !== null && t.account.code === CODE_LOAN_PRINCIPAL && t.amountCents < 0;
+    if (isLoanRepayment && !interestAccount) {
+      outcome.skipped.push({ id, reason: "Interest account missing — run the seed" });
+      continue;
+    }
+    const allocations: BankAllocation[] = isLoanRepayment
+      ? loanAllocations(t, interestAccount!, accountId)
+      : [{ accountId, cents: Math.abs(t.amountCents), gstTreatment, subcontractorId: t.subcontractorId }];
+
+    const clientId = t.bankAccount.clientId;
+    const written = await db.$transaction(async (tx) => {
+      // Optimistic: a transaction recoded between the screen loading and the
+      // click is skipped, not posted under a coding the clicker never saw.
+      const claimed = await repo.updateTransactionIfVersion(tx, t.id, t.version, {
         status: "REVIEWED",
         needsReview: false,
         reviewedAt: new Date(),
         reviewedById: userId,
-        journalEntryId: entryId,
+      });
+      if (claimed === 0) return false;
+
+      const entryId = await postBankTransactionInTx(tx, firmId, userId, {
+        clientId,
+        date: t.date,
+        description: t.description,
+        bankLedgerAccountId: bankLedger.id,
+        amountCents: t.amountCents,
+        gstRegistered: t.bankAccount.client.gstRegistered,
+        allocations,
+        bankTransactionId: t.id,
+      });
+      await tx.bankTransaction.update({ where: { id: t.id }, data: { journalEntryId: entryId }, select: { id: true } });
+      // Metering: one reconciled transaction. The key makes a re-acceptance
+      // after a reopen count once, not twice.
+      await tx.usageEvent.createMany({
+        data: [{ firmId, kind: "RECONCILED_TRANSACTION", quantity: 1, entityId: t.id, idempotencyKey: `accept:${t.id}` }],
+        skipDuplicates: true,
       });
       await recordAudit(tx, {
         firmId,
         userId,
-        clientId: t.bankAccount.clientId,
+        clientId,
         action: "TRANSACTION_ACCEPTED",
         entityType: "BankTransaction",
         entityId: t.id,
-        after: { journalEntryId: entryId, accountId, gstTreatment },
+        after: {
+          journalEntryId: entryId,
+          allocations: allocations.map((a) => ({ accountId: a.accountId, cents: a.cents, gstTreatment: a.gstTreatment })),
+          loanId: t.loanId,
+        },
       });
+      return true;
     });
+    if (!written) {
+      outcome.skipped.push({ id, reason: "Changed by someone else — reload" });
+      continue;
+    }
     outcome.accepted += 1;
   }
 
@@ -342,7 +475,10 @@ export async function acceptTransactions(
 
 /**
  * Take an accepted transaction back for recoding. Its journal is reversed,
- * not deleted — the ledger keeps both entries.
+ * not deleted — the ledger keeps both entries, and the transaction keeps its
+ * pointer to the entry it was posted through: the reversal is part of the
+ * same row's story, and the lineage from journal to bank row must survive.
+ * Acceptance later overwrites the pointer with the new entry.
  */
 export async function reopenTransaction(
   firmId: string,
@@ -382,7 +518,6 @@ export async function reopenTransaction(
       needsReview: true,
       reviewedAt: null,
       reviewedById: null,
-      journalEntryId: null,
     });
     await recordAudit(tx, {
       firmId,
@@ -479,6 +614,7 @@ function toMemoryRow(row: MemoryRowRaw): MemoryRuleRow {
     evidenceCount: row.evidenceCount,
     lastUsedAt: row.lastUsedAt,
     createdAt: row.createdAt,
+    version: row.version,
   };
 }
 
@@ -500,6 +636,9 @@ export async function updateMemoryRule(
 ): Promise<ActionResult> {
   const rule = await repo.findOwnedMemoryRule(firmId, ruleId);
   if (!rule) return { ok: false, error: "Rule not found" };
+  if (input.version !== undefined && input.version !== rule.version) {
+    return { ok: false, error: "Someone else changed this rule while you were editing it. Reload and try again." };
+  }
 
   const visible = rule.clientId
     ? await accountsRepo.resolveForClient(firmId, rule.clientId, [input.accountId])
@@ -518,13 +657,14 @@ export async function updateMemoryRule(
     return { ok: false, error: "Another rule already uses that pattern in this scope", field: "pattern" };
   }
 
-  await db.$transaction(async (tx) => {
-    await repo.updateMemoryRule(tx, rule.id, {
+  const conflict = await db.$transaction(async (tx) => {
+    const written = await repo.updateMemoryRuleIfVersion(tx, firmId, rule.id, rule.version, {
       pattern,
       matchType: input.matchType,
       accountId: account.id,
       gstTreatment: input.gstTreatment,
     });
+    if (written === 0) return true;
     await recordAudit(tx, {
       firmId,
       userId,
@@ -535,7 +675,9 @@ export async function updateMemoryRule(
       before: { pattern: rule.pattern, matchType: rule.matchType, accountId: rule.accountId, gstTreatment: rule.gstTreatment },
       after: { pattern, matchType: input.matchType, accountId: account.id, gstTreatment: input.gstTreatment },
     });
+    return false;
   });
+  if (conflict) return { ok: false, error: "Someone else changed this rule while you were editing it. Reload and try again." };
   return { ok: true, id: rule.id };
 }
 

@@ -47,7 +47,7 @@ const requiredAbnField = z
 
 /** Fields only some entity types own. Cleared by the service for the others. */
 const entitySpecific = {
-  incomeTaxRate: z.coerce.number().int().min(0).max(100).optional(),
+  incomeTaxRatePercent: z.coerce.number().int().min(0).max(100).optional(),
   totalUnits: z.coerce.number().int().min(0).optional(),
   unitValueCents: z.coerce.number().int().min(0).optional(),
 };
@@ -68,6 +68,8 @@ export const UpdateClientSchema = z.object({
   industry: optionalText(120),
   email: optionalText(200).refine((v) => !v || EMAIL.test(v), "Enter a valid email address"),
   phone: optionalText(40),
+  /** The row version the form was opened with; a stale edit is refused, not merged. */
+  version: z.coerce.number().int().min(0).optional(),
   entityType: EntityEnum,
   gstRegistered: z.coerce.boolean(),
   gstBasis: GstBasisEnum,
@@ -172,7 +174,7 @@ export function createClientFromForm(form: FormData) {
     gstRegistered: checkbox(form, "gstRegistered"),
     industry: text(form, "industry"),
     entityType: form.get("entityType"),
-    incomeTaxRate: numeric(form, "incomeTaxRate"),
+    incomeTaxRatePercent: numeric(form, "incomeTaxRatePercent"),
     totalUnits: numeric(form, "totalUnits"),
     unitValueCents: numeric(form, "unitValueCents"),
   });
@@ -190,9 +192,10 @@ export function updateClientFromForm(form: FormData) {
     gstRegistered: checkbox(form, "gstRegistered"),
     gstBasis: form.get("gstBasis"),
     basFrequency: form.get("basFrequency"),
-    incomeTaxRate: numeric(form, "incomeTaxRate"),
+    incomeTaxRatePercent: numeric(form, "incomeTaxRatePercent"),
     totalUnits: numeric(form, "totalUnits"),
     unitValueCents: numeric(form, "unitValueCents"),
+    version: numeric(form, "version"),
   });
 }
 

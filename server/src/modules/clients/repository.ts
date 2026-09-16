@@ -47,9 +47,10 @@ const DETAIL_SELECT = {
   industry: true,
   email: true,
   phone: true,
-  incomeTaxRate: true,
+  incomeTaxRatePercent: true,
   totalUnits: true,
   unitValueCents: true,
+  version: true,
   createdAt: true,
 } satisfies Prisma.ClientSelect;
 
@@ -98,23 +99,29 @@ export function findOwnedClientId(firmId: string, clientId: string) {
   });
 }
 
-export function createClient(data: Prisma.ClientUncheckedCreateInput) {
-  return db.client.create({ data, select: { id: true } });
+export function createClient(tx: DbClient, data: Prisma.ClientUncheckedCreateInput) {
+  return tx.client.create({ data, select: { id: true } });
 }
 
 /**
  * `updateMany` rather than `update`: the firm goes in the `where`, so a client
  * belonging to another firm matches nothing and reports zero rows written.
  * Returns the number of rows affected — 0 means "not found", never "forbidden".
+ *
+ * With `expectedVersion`, the write also requires the row to be at the version
+ * the form was opened with; zero rows then means a colleague saved first.
+ * Every write bumps the version.
  */
 export async function updateOwnedClient(
+  tx: DbClient,
   firmId: string,
   clientId: string,
   data: Prisma.ClientUncheckedUpdateInput,
+  expectedVersion?: number,
 ): Promise<number> {
-  const { count } = await db.client.updateMany({
-    where: { id: clientId, firmId },
-    data,
+  const { count } = await tx.client.updateMany({
+    where: { id: clientId, firmId, ...(expectedVersion !== undefined ? { version: expectedVersion } : {}) },
+    data: { ...data, version: { increment: 1 } },
   });
   return count;
 }
@@ -127,8 +134,8 @@ export function listClientNotes(firmId: string, clientId: string) {
   });
 }
 
-export function createClientNote(clientId: string, title: string, body: string) {
-  return db.clientNote.create({
+export function createClientNote(tx: DbClient, clientId: string, title: string, body: string) {
+  return tx.clientNote.create({
     data: { clientId, title, body },
     select: { id: true },
   });

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { db } from "@/server/core/db";
+import { recordAudit } from "@/server/core/audit";
 import { getMailer, mailIsConsoleOnly } from "@/server/core/mail";
 import { consume } from "@/server/core/rate-limit";
 import * as firms from "@/server/modules/firms/repository";
@@ -44,6 +46,19 @@ export async function sendSupportRequest(
       `Firm: ${firm?.name ?? firmId} (${firmId})\n` +
       (input.page ? `Page: ${input.page}\n` : "") +
       `Category: ${label}\n`,
+  });
+
+  // The fact of the request, not its text: "who asked for help, about what
+  // area, when" is worth having when a firm later disputes what was said.
+  await db.$transaction(async (tx) => {
+    await recordAudit(tx, {
+      firmId,
+      userId: user.id,
+      action: "SUPPORT_REQUESTED",
+      entityType: "Firm",
+      entityId: firmId,
+      after: { category: input.category, subject: input.subject.slice(0, 120), page: input.page ?? null },
+    });
   });
 
   return { ok: true, id: "sent", consoleOnly: mailIsConsoleOnly() };

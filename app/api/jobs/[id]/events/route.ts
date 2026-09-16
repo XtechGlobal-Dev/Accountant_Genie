@@ -33,7 +33,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       const startedAt = Date.now();
       try {
         while (!closed && Date.now() - startedAt < MAX_MS) {
-          const events = await eventsSince(id, since);
+          const events = await eventsSince(session.firmId, id, since);
           for (const event of events) {
             send("stage", event);
             since = new Date(event.at);

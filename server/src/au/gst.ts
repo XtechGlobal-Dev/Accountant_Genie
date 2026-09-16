@@ -117,9 +117,12 @@ const BAS_MAP: Record<GstTreatment, readonly BasLabel[]> = {
   GST_FREE_EXPENSES: ["G11"],
   GST_ON_CAPITAL: ["G10", "1B"],
   GST_FREE_CAPITAL: ["G10"],
-  // Input-taxed sales report at G1 and are backed out at G4 on the full BAS.
-  // Stage 0 produces a Simple BAS only, so they are excluded here rather than
-  // half-implemented. REQUIRES_VERIFICATION before the Extended BAS ships.
+  // Input-taxed supplies are not mapped by treatment alone: whether they are
+  // a sale (G1) or a purchase (G11) depends on the account, and whether they
+  // are included at all is the verified INPUT_TAXED_BAS_LABELS rule. The BAS
+  // aggregator handles them explicitly — see reports/aggregate.ts. Until the
+  // firm's advisor verifies the rule they contribute to no label, and the
+  // statement says how many lines it left out.
   INPUT_TAXED: [],
   BAS_EXCLUDED: [],
   UNALLOCATED: [],

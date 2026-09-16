@@ -21,9 +21,14 @@ export interface ChartAccountRow {
   clientName: string | null;
   /** Journal lines posted against it. Non-zero locks the account's code. */
   postingCount: number;
-  /** Tax treatment not yet signed off by the registered tax advisor. */
+  /** Tax treatment not yet signed off by THIS firm's registered tax advisor. */
   requiresVerification: boolean;
   taxNote: string | null;
+  /** Who signed it off for this firm, when someone has. */
+  verifiedBy: string | null;
+  verifiedAt: Date | null;
+  /** Optimistic lock; sent back with an edit so a stale form is refused. */
+  version: number;
 }
 
 /** Accounts grouped for display, in report order. */

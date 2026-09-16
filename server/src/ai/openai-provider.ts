@@ -1,12 +1,26 @@
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
-import { PROMPT_VERSION, buildContext, loadClassificationPrompt } from "./prompt";
+import {
+  PROMPT_VERSION,
+  SUBCONTRACTOR_PROMPT_VERSION,
+  buildContext,
+  buildSubcontractorContext,
+  hashInput,
+  loadClassificationPrompt,
+  loadSubcontractorPrompt,
+} from "./prompt";
 import {
   ClassificationBatchSchema,
+  SubcontractorBatchSchema,
   sanitiseResult,
+  sanitiseSubcontractor,
   type AccountingAIProvider,
   type ClassificationInput,
   type ClassificationResponse,
+  type ProviderFailure,
+  type ProviderMeta,
+  type SubcontractorInput,
+  type SubcontractorResponse,
 } from "./types";
 
 export class OpenAIProvider implements AccountingAIProvider {
@@ -20,15 +34,12 @@ export class OpenAIProvider implements AccountingAIProvider {
   }
 
   async classifyTransactions(input: ClassificationInput): Promise<ClassificationResponse> {
-    const meta = {
-      provider: this.name,
-      model: this.model,
-      promptVersion: PROMPT_VERSION,
-    };
+    const meta: ProviderMeta = { provider: this.name, model: this.model, promptVersion: PROMPT_VERSION };
 
     try {
       const systemPrompt = loadClassificationPrompt();
       const context = buildContext(input);
+      meta.inputHash = hashInput(systemPrompt, context);
 
       // No `temperature: 0` here, though a classifier wants one.
       //
@@ -54,34 +65,75 @@ export class OpenAIProvider implements AccountingAIProvider {
         },
       });
 
-      // A refusal or an unparseable body must never fall through to a default
-      // coding — the whole batch goes to human review instead.
-      const parsed = response.output_parsed;
-      if (!parsed) {
-        return {
-          results: [],
-          meta,
-          failure: {
-            kind: "invalid_output",
-            detail: "Model returned no parseable structured output",
-          },
-        };
-      }
+      meta.inputTokens = response.usage?.input_tokens;
+      meta.outputTokens = response.usage?.output_tokens;
 
-      return {
-        results: parsed.results.map(sanitiseResult),
-        meta: {
-          ...meta,
-          inputTokens: response.usage?.input_tokens,
-          outputTokens: response.usage?.output_tokens,
-        },
-      };
+      const failure = failureOf(response);
+      if (failure) return { results: [], meta, failure };
+
+      return { results: response.output_parsed!.results.map(sanitiseResult), meta };
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
-      // Refusals surface as an error on this SDK path; classify them separately
-      // so the review queue can show why.
-      const kind = /refus/i.test(detail) ? "refusal" : "error";
-      return { results: [], meta, failure: { kind, detail } };
+      return { results: [], meta, failure: { kind: "error", detail } };
     }
   }
+
+  async identifySubcontractors(input: SubcontractorInput): Promise<SubcontractorResponse> {
+    const meta: ProviderMeta = { provider: this.name, model: this.model, promptVersion: SUBCONTRACTOR_PROMPT_VERSION };
+    try {
+      const systemPrompt = loadSubcontractorPrompt();
+      const context = buildSubcontractorContext(input);
+      meta.inputHash = hashInput(systemPrompt, context);
+
+      const response = await this.client.responses.parse({
+        model: this.model,
+        input: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: context },
+        ],
+        text: { format: zodTextFormat(SubcontractorBatchSchema, "subcontractor_batch") },
+      });
+
+      meta.inputTokens = response.usage?.input_tokens;
+      meta.outputTokens = response.usage?.output_tokens;
+
+      const failure = failureOf(response);
+      if (failure) return { results: [], meta, failure };
+
+      return { results: response.output_parsed!.results.map(sanitiseSubcontractor), meta };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { results: [], meta, failure: { kind: "error", detail } };
+    }
+  }
+}
+
+type ParsedResponse = { output: unknown; output_parsed: unknown };
+
+/**
+ * The Responses API surfaces a safety refusal as a content part of type
+ * "refusal" on the message, not as an exception — so it is read from the
+ * structured output, BEFORE `output_parsed` is trusted. No regex over an
+ * error string: a refusal is a typed part or it is nothing.
+ */
+function refusalIn(output: unknown): string | null {
+  if (!Array.isArray(output)) return null;
+  for (const item of output) {
+    const content = (item as { type?: string; content?: unknown })?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      const p = part as { type?: string; refusal?: string };
+      if (p?.type === "refusal") return p.refusal || "Model declined the request";
+    }
+  }
+  return null;
+}
+
+function failureOf(response: ParsedResponse): ProviderFailure | null {
+  const refusal = refusalIn(response.output);
+  if (refusal) return { kind: "refusal", detail: refusal };
+  if (!response.output_parsed) {
+    return { kind: "invalid_output", detail: "Model returned no parseable structured output" };
+  }
+  return null;
 }

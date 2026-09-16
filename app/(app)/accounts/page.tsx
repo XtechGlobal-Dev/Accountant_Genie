@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { requireSession } from "@/server/core/session";
+import { canVerifyTax } from "@/server/core/permissions";
 import { getChartOfAccounts } from "@/server/modules/accounts/service";
 import { listClientOptions } from "@/server/modules/clients/service";
 import { ChartOfAccountsView } from "@/features/accounts/components/chart-of-accounts-view";
@@ -14,5 +15,5 @@ export default async function AccountsPage() {
     listClientOptions(session.firmId),
   ]);
 
-  return <ChartOfAccountsView chart={chart} clients={clients} isTaxAgent={session.isTaxAgent} />;
+  return <ChartOfAccountsView chart={chart} clients={clients} isTaxAgent={canVerifyTax(session)} />;
 }

@@ -1,9 +1,10 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
 import { getStorage } from "@/server/core/storage";
-import { enqueue, type StageReporter } from "@/server/jobs/queue";
+import { TerminalJobError, enqueue, type StageReporter } from "@/server/jobs/queue";
 import { runEngine } from "@/server/modules/reconcile/engine";
 import type { Prisma } from "@/generated/prisma";
 import type { ImportOutcome, UploadTarget } from "@/shared/contracts/transaction";
@@ -49,22 +50,27 @@ export async function importStatement(
   const sniff = sniffStatement(input.filename, bytes);
   if ("error" in sniff) return { ok: false, error: sniff.error, field: "file" };
 
-  const created = await repo.createImport({
-    bankAccountId: account.id,
-    filename: input.filename,
-    fileType: sniff.kind,
-    status: "PARSING",
-    stage: "UPLOADING",
-    createdById: userId,
-  });
-  const importId = created.id;
-
-  // Keep the original for audit before anything is derived from it.
+  // The id is minted here so the original can be stored under it BEFORE the
+  // row exists: an import row never points at a file that is not there, and
+  // the row and its audit entry are one transaction.
+  const importId = randomUUID();
   const key = `${firmId}/imports/${importId}-${safeName(input.filename)}`;
   await getStorage().put(key, bytes, sniff.kind === "pdf" ? "application/pdf" : "text/csv");
-  await repo.updateImport(importId, { storagePath: key, stage: "FILE_VALIDATION" });
 
   await db.$transaction(async (tx) => {
+    await tx.statementImport.create({
+      data: {
+        id: importId,
+        bankAccountId: account.id,
+        filename: input.filename,
+        fileType: sniff.kind,
+        status: "PARSING",
+        stage: "FILE_VALIDATION",
+        storagePath: key,
+        createdById: userId,
+      },
+      select: { id: true },
+    });
     await recordAudit(tx, {
       firmId,
       userId,
@@ -130,7 +136,8 @@ export async function processImport(
         failedRows: asJson(parsed.failed.slice(0, 200)),
         completedAt: new Date(),
       });
-      throw new Error(reason);
+      // The file, not the world, is the problem: retrying reads the same bytes.
+      throw new TerminalJobError(reason);
     }
 
     await report("DEDUPLICATING", { processed: 0, total: parsed.rows.length });
@@ -187,6 +194,27 @@ export async function processImport(
     await repo.updateImport(importId, { status: "FAILED", stage: "FAILED", error: detail, completedAt: new Date() });
     throw error;
   }
+}
+
+/**
+ * The rows an import could not read, as CSV, for the person to fix and
+ * re-upload. Scoped through the bank account's client to the firm, like the
+ * import itself.
+ */
+export async function failedRowsCsv(firmId: string, importId: string): Promise<{ filename: string; csv: string } | null> {
+  const row = await db.statementImport.findFirst({
+    where: { id: importId, bankAccount: { client: { firmId } } },
+    select: { filename: true, failedRows: true },
+  });
+  if (!row) return null;
+  const failed = Array.isArray(row.failedRows) ? (row.failedRows as { index?: number; reason?: string; raw?: unknown }[]) : [];
+  const cell = (value: unknown) => {
+    const text = value === null || value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value);
+    const guarded = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+    return /[",\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+  };
+  const lines = ["Row,Reason,Raw", ...failed.map((f) => [f.index ?? "", f.reason ?? "", f.raw ?? ""].map(cell).join(","))];
+  return { filename: `${row.filename.replace(/\.[^.]+$/, "")}-failed-rows.csv`, csv: lines.join("\r\n") + "\r\n" };
 }
 
 /** What an import came to, once its job has finished. */

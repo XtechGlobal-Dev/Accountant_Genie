@@ -27,12 +27,14 @@ export function RecodeModal({
   transaction,
   accounts,
   subcontractors,
+  loans,
   onClose,
 }: {
   clientId: string;
   transaction: TransactionRow;
   accounts: readonly AccountOption[];
   subcontractors: ReadonlyArray<{ id: string; name: string }>;
+  loans: ReadonlyArray<{ id: string; name: string }>;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -48,6 +50,7 @@ export function RecodeModal({
   const [pattern, setPattern] = useState(transaction.normalised);
   const [matchType, setMatchType] = useState<"EXACT" | "CONTAINS">("EXACT");
   const [subcontractorId, setSubcontractorId] = useState(transaction.subcontractorId ?? "");
+  const [loanId, setLoanId] = useState(transaction.loanId ?? "");
 
   const account = accounts.find((a) => a.id === accountId);
   const allowed =
@@ -68,6 +71,9 @@ export function RecodeModal({
         pattern: remember === "NONE" ? undefined : pattern,
         matchType,
         subcontractorId: subcontractorId || undefined,
+        loanId: loanId || undefined,
+        // The row version the screen showed: a stale edit is refused, not merged.
+        version: transaction.version,
       });
       if (result.ok) {
         onClose();
@@ -155,6 +161,23 @@ export function RecodeModal({
             {subcontractors.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
+              </option>
+            ))}
+          </Select>
+        ) : null}
+
+        {loans.length > 0 && account ? (
+          <Select
+            label="Loan facility"
+            name="loanId"
+            value={loanId}
+            onChange={(event) => setLoanId(event.target.value)}
+            hint="A repayment linked to a loan is split into principal and interest from the loan's schedule when it is accepted — never expensed whole."
+          >
+            <option value="">Not a loan repayment</option>
+            {loans.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
               </option>
             ))}
           </Select>

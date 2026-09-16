@@ -1,5 +1,13 @@
-import { db } from "../src/core/db.js";
+import type { PrismaClient } from "../generated/prisma/client.js";
 import { AU_CHART_OF_ACCOUNTS } from "../src/au/coa.js";
+
+/**
+ * The client is passed in rather than imported: the seed runs under plain
+ * `tsx` with its own client, and importing `src/core/db` here would evaluate
+ * it (and read DATABASE_URL) before the seed has loaded `.env`. The sync
+ * script passes the app's singleton.
+ */
+type Db = Pick<PrismaClient, "account">;
 
 /**
  * Bring the system chart of accounts in the database into line with
@@ -23,6 +31,7 @@ export interface AccountSyncResult {
 }
 
 export async function syncSystemAccounts(
+  db: Db,
   log: (line: string) => void = () => {},
 ): Promise<AccountSyncResult> {
   let created = 0;
@@ -61,7 +70,7 @@ export async function syncSystemAccounts(
     }
   }
 
-  const retired = await retireSystemAccounts(log);
+  const retired = await retireSystemAccounts(db, log);
   return { created, updated, ...retired };
 }
 
@@ -79,6 +88,7 @@ export async function syncSystemAccounts(
  * it still reproduces.
  */
 async function retireSystemAccounts(
+  db: Db,
   log: (line: string) => void,
 ): Promise<{ deleted: number; deactivated: number }> {
   const keep = AU_CHART_OF_ACCOUNTS.map((a) => a.code);

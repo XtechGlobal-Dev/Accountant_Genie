@@ -1,6 +1,7 @@
 import "server-only";
 
 import { db } from "@/server/core/db";
+import { recordAudit } from "@/server/core/audit";
 import { enqueue } from "@/server/jobs/queue";
 import { verifyWebhook } from "./fiskil/webhook";
 import { TRANSACTION_EVENTS, type FiskilWebhookPayload } from "./fiskil/types";
@@ -138,9 +139,24 @@ async function processEvent(
     : null;
 
   if (event === "consent.revoked") {
-    await db.bankFeedConnection.updateMany({
-      where: { clientId: client.id, externalConnectionId },
-      data: { status: "REVOKED", revokedAt: new Date() },
+    // A revocation the client made at their bank. Audited like one the firm
+    // made: "when did this permission end, and who ended it" is the record
+    // the CDR obliges us to keep.
+    await db.$transaction(async (tx) => {
+      const { count } = await tx.bankFeedConnection.updateMany({
+        where: { clientId: client.id, externalConnectionId },
+        data: { status: "REVOKED", revokedAt: new Date() },
+      });
+      if (count === 0) return;
+      await recordAudit(tx, {
+        firmId: client.firmId,
+        userId: null,
+        clientId: client.id,
+        action: "BANK_FEED_REVOKED",
+        entityType: "BankFeedConnection",
+        entityId: connectionId ?? externalConnectionId ?? messageId,
+        after: { by: "client", via: "webhook", event, messageId },
+      });
     });
     await markProcessed(messageId);
     return;
@@ -182,63 +198,83 @@ async function processEvent(
  */
 async function upsertConnection(
   clientId: string,
-  _firmId: string,
+  firmId: string,
   endUserId: string,
   externalConnectionId: string,
   payload: FiskilWebhookPayload,
 ): Promise<string | null> {
   const institutionId = payload.data?.institution_id ?? null;
 
-  const existing = await db.bankFeedConnection.findFirst({
-    where: { clientId, externalConnectionId },
-    select: { id: true, status: true },
-  });
-  if (existing) {
-    await db.bankFeedConnection.update({
-      where: { id: existing.id },
-      data: {
-        status: existing.status === "PENDING" ? "ACTIVE" : existing.status,
-        ...(institutionId ? { institutionId } : {}),
-      },
+  // One transaction: the row and the audit entry that says a consent became
+  // active land together, or not at all.
+  return db.$transaction(async (tx) => {
+    const connected = async (connectionId: string, how: string) => {
+      await recordAudit(tx, {
+        firmId,
+        userId: null,
+        clientId,
+        action: "BANK_FEED_CONNECTED",
+        entityType: "BankFeedConnection",
+        entityId: connectionId,
+        after: { by: "client", via: "webhook", how, externalConnectionId, institutionId },
+      });
+    };
+
+    const existing = await tx.bankFeedConnection.findFirst({
+      where: { clientId, externalConnectionId },
+      select: { id: true, status: true },
     });
-    return existing.id;
-  }
+    if (existing) {
+      const activated = existing.status === "PENDING";
+      await tx.bankFeedConnection.update({
+        where: { id: existing.id },
+        data: {
+          status: activated ? "ACTIVE" : existing.status,
+          ...(institutionId ? { institutionId } : {}),
+        },
+      });
+      if (activated) await connected(existing.id, "pending row activated");
+      return existing.id;
+    }
 
-  // The pending row this consent came from, if the flow started here.
-  const pending = await db.bankFeedConnection.findFirst({
-    where: { clientId, status: "PENDING", externalConnectionId: null },
-    orderBy: { createdAt: "desc" },
-    select: { id: true },
-  });
+    // The pending row this consent came from, if the flow started here.
+    const pending = await tx.bankFeedConnection.findFirst({
+      where: { clientId, status: "PENDING", externalConnectionId: null },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
 
-  if (pending) {
-    await db.bankFeedConnection.update({
-      where: { id: pending.id },
+    if (pending) {
+      await tx.bankFeedConnection.update({
+        where: { id: pending.id },
+        data: {
+          externalConnectionId,
+          arrangementId: externalConnectionId,
+          status: "ACTIVE",
+          consentedAt: new Date(),
+          ...(institutionId ? { institutionId } : {}),
+        },
+      });
+      await connected(pending.id, "matched to the auth session that started it");
+      return pending.id;
+    }
+
+    const created = await tx.bankFeedConnection.create({
       data: {
+        clientId,
+        provider: "fiskil",
+        externalUserId: endUserId,
         externalConnectionId,
         arrangementId: externalConnectionId,
         status: "ACTIVE",
         consentedAt: new Date(),
-        ...(institutionId ? { institutionId } : {}),
+        institutionId,
       },
+      select: { id: true },
     });
-    return pending.id;
-  }
-
-  const created = await db.bankFeedConnection.create({
-    data: {
-      clientId,
-      provider: "fiskil",
-      externalUserId: endUserId,
-      externalConnectionId,
-      arrangementId: externalConnectionId,
-      status: "ACTIVE",
-      consentedAt: new Date(),
-      institutionId,
-    },
-    select: { id: true },
+    await connected(created.id, "created from the webhook");
+    return created.id;
   });
-  return created.id;
 }
 
 function markProcessed(messageId: string): Promise<unknown> {

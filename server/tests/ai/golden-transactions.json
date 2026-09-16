@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "prompt": "transaction-classification/v2",
+  "prompt": "transaction-classification/v3",
   "about": [
     "The regression gate `ai-classification` asks for: transaction -> expected account ->",
     "expected treatment -> expected decision. Run it before shipping any change to the",
@@ -22,38 +22,270 @@
     "The `settled` expectations are ordinary bookkeeping, not tax advice. The registered",
     "tax advisor should confirm them before this file is treated as authoritative."
   ],
-  "client": { "industry": "Construction", "entityType": "COMPANY", "gstRegistered": true },
+  "client": {
+    "industry": "Construction",
+    "entityType": "COMPANY",
+    "gstRegistered": true
+  },
   "cases": [
-    { "date": "2026-07-02", "description": "PROGRESS CLAIM 2039 KELLYVILLE", "amountCents": 880000, "kind": "settled", "accountCode": 200 },
-    { "date": "2026-07-03", "description": "VISA PURCHASE BUNNINGS 6421 ALEXANDRIA CARD 4523", "amountCents": -41235, "kind": "policy", "accountCode": 473, "alsoAccept": [328, 429], "why": "Consumables or job materials. Same GST either way." },
-    { "date": "2026-07-06", "description": "AMPOL FOODARY 3391 SILVERWATER", "amountCents": -13890, "kind": "settled", "accountCode": 449 },
-    { "date": "2026-07-07", "description": "ACCOUNT KEEPING FEE", "amountCents": -1500, "kind": "settled", "accountCode": 404 },
-    { "date": "2026-07-10", "description": "TELSTRA BILL PAYMENT 20881234", "amountCents": -18900, "kind": "settled", "accountCode": 457 },
-    { "date": "2026-07-14", "description": "PROGRESS CLAIM 2041 KELLYVILLE", "amountCents": 1100000, "kind": "settled", "accountCode": 200 },
-    { "date": "2026-07-15", "description": "TRANSFER TO SAVINGS ACC 4423", "amountCents": -500000, "kind": "settled", "accountCode": 977 },
-    { "date": "2026-07-17", "description": "BUNNINGS 6421 ALEXANDRIA", "amountCents": -128760, "kind": "policy", "accountCode": 328, "alsoAccept": [473, 429], "why": "At $1,287 this reads as job materials rather than consumables, but that is the firm's call." },
-    { "date": "2026-07-20", "description": "PAYROLL RUN 14 WAGES", "amountCents": -480000, "kind": "policy", "accountCode": 477, "alsoAccept": [325], "why": "Direct wages (COGS) vs overhead wages. A builder may want gross profit to carry site labour." },
-    { "date": "2026-07-20", "description": "AUSTRALIANSUPER CLEARING HOUSE", "amountCents": -52800, "kind": "settled", "accountCode": 478 },
-    { "date": "2026-07-24", "description": "OFFICEWORKS 0142 AUBURN", "amountCents": -9650, "kind": "policy", "accountCode": 461, "alsoAccept": [429, 433], "why": "Stationery, general, or a small computer item — $96 does not say which." },
-    { "date": "2026-07-28", "description": "AGL ENERGY 3820119", "amountCents": -34210, "kind": "settled", "accountCode": 453 },
-    { "date": "2026-07-31", "description": "RENT WORKSHOP 12 SILVERWATER RD", "amountCents": -330000, "kind": "settled", "accountCode": 469 },
-    { "date": "2026-08-03", "description": "ATO PAYMENT 5512983", "amountCents": -295000, "kind": "abstain", "why": "Could be PAYG withholding (825), GST payable (820), an income tax instalment (740) or income tax (830). The description cannot say. Coding this confidently puts a wrong figure on a BAS." },
-    { "date": "2026-08-05", "description": "MITRE 10 GRANVILLE", "amountCents": -21545, "kind": "policy", "accountCode": 473, "alsoAccept": [328, 429], "why": "Same call as Bunnings." },
-    { "date": "2026-08-06", "description": "ACCOUNT KEEPING FEE", "amountCents": -1500, "kind": "settled", "accountCode": 404 },
-    { "date": "2026-08-10", "description": "DIRECT CREDIT CONCRETE PLUS PTY LTD INV 5578", "amountCents": 660000, "kind": "settled", "accountCode": 200 },
-    { "date": "2026-08-11", "description": "LOAN REPAYMENT WESTPAC EQUIP FIN", "amountCents": -106619, "kind": "settled", "accountCode": 840, "why": "Principal to the loan account. The interest portion is split at review against the loan schedule, not guessed here." },
-    { "date": "2026-08-12", "description": "VISA PURCHASE SHELL COLES EXPRESS 4423", "amountCents": -14230, "kind": "settled", "accountCode": 449 },
-    { "date": "2026-08-17", "description": "PAYROLL RUN 15 WAGES", "amountCents": -480000, "kind": "policy", "accountCode": 477, "alsoAccept": [325] },
-    { "date": "2026-08-17", "description": "AUSTRALIANSUPER CLEARING HOUSE", "amountCents": -52800, "kind": "settled", "accountCode": 478 },
-    { "date": "2026-08-19", "description": "SYDNEY WATER", "amountCents": -18640, "kind": "abstain", "why": "The supply of water is GST-free but a Sydney Water bill carries taxable service charges too, so the split decides the BAS figure. Account 453 is GST_ON_EXPENSES and 465 is GST_FREE_EXPENSES — picking either one blind puts a wrong number at 1B. The tax advisor sets the policy." },
-    { "date": "2026-08-21", "description": "FORMWORK PLUS SUBCONTRACT INV 117", "amountCents": -275000, "kind": "settled", "accountCode": 320, "why": "Also a TPAR-reportable payment: the subcontractor link is set at review." },
-    { "date": "2026-08-24", "description": "ADOBE SYSTEMS SOFTWARE", "amountCents": -8999, "kind": "policy", "accountCode": 433, "alsoAccept": [485], "why": "Software or a subscription. Same GST either way." },
-    { "date": "2026-08-28", "description": "BP CONNECT SMITHFIELD", "amountCents": -12175, "kind": "settled", "accountCode": 449 },
-    { "date": "2026-08-31", "description": "RENT WORKSHOP 12 SILVERWATER RD", "amountCents": -330000, "kind": "settled", "accountCode": 469 },
-    { "date": "2026-08-31", "description": "INTEREST CHARGED", "amountCents": -1240, "kind": "settled", "accountCode": 400 },
-    { "date": "2026-09-02", "description": "PROGRESS CLAIM 2044 ROUSE HILL", "amountCents": 1430000, "kind": "settled", "accountCode": 200 },
-    { "date": "2026-09-04", "description": "PARRAMATTA CITY COUNCIL RATES", "amountCents": -64000, "kind": "settled", "accountCode": 465 },
-    { "date": "2026-09-07", "description": "ACCOUNT KEEPING FEE", "amountCents": -1500, "kind": "settled", "accountCode": 404 },
-    { "date": "2026-09-08", "description": "HARVEY NORMAN COMMERCIAL LAPTOP", "amountCents": -219900, "kind": "abstain", "why": "$2,199 sits near the instant asset write-off threshold, which this system has no verified value for. Expensing it (433) or capitalising it (710) is a tax decision, not a coding one." }
+    {
+      "date": "2026-07-02",
+      "description": "PROGRESS CLAIM 2039 KELLYVILLE",
+      "amountCents": 880000,
+      "kind": "settled",
+      "accountCode": 200
+    },
+    {
+      "date": "2026-07-03",
+      "description": "VISA PURCHASE BUNNINGS 6421 ALEXANDRIA CARD 4523",
+      "amountCents": -41235,
+      "kind": "policy",
+      "accountCode": 500,
+      "alsoAccept": [
+        328,
+        327
+      ],
+      "why": "Repairs, materials or purchases. Same GST either way."
+    },
+    {
+      "date": "2026-07-06",
+      "description": "AMPOL FOODARY 3391 SILVERWATER",
+      "amountCents": -13890,
+      "kind": "settled",
+      "accountCode": 420
+    },
+    {
+      "date": "2026-07-07",
+      "description": "ACCOUNT KEEPING FEE",
+      "amountCents": -1500,
+      "kind": "policy",
+      "accountCode": 320,
+      "alsoAccept": [
+        325
+      ],
+      "why": "The supplied chart has two bank-fee accounts, 320 Bank Fees and 325 Bank Charges (Non-GST), both GST-free. Which one a firm uses is its call; the BAS is the same."
+    },
+    {
+      "date": "2026-07-10",
+      "description": "TELSTRA BILL PAYMENT 20881234",
+      "amountCents": -18900,
+      "kind": "settled",
+      "accountCode": 540
+    },
+    {
+      "date": "2026-07-14",
+      "description": "PROGRESS CLAIM 2041 KELLYVILLE",
+      "amountCents": 1100000,
+      "kind": "settled",
+      "accountCode": 200
+    },
+    {
+      "date": "2026-07-15",
+      "description": "TRANSFER TO SAVINGS ACC 4423",
+      "amountCents": -500000,
+      "kind": "settled",
+      "accountCode": 700
+    },
+    {
+      "date": "2026-07-17",
+      "description": "BUNNINGS 6421 ALEXANDRIA",
+      "amountCents": -128760,
+      "kind": "policy",
+      "accountCode": 328,
+      "alsoAccept": [
+        500,
+        327
+      ],
+      "why": "At $1,287 this reads as job materials rather than consumables, but that is the firm's call."
+    },
+    {
+      "date": "2026-07-20",
+      "description": "PAYROLL RUN 14 WAGES",
+      "amountCents": -480000,
+      "kind": "policy",
+      "accountCode": 600,
+      "alsoAccept": [
+        370
+      ],
+      "why": "Wages, or directors/management fees for an owner-operator — the chart has no direct-wages account."
+    },
+    {
+      "date": "2026-07-20",
+      "description": "AUSTRALIANSUPER CLEARING HOUSE",
+      "amountCents": -52800,
+      "kind": "settled",
+      "accountCode": 610
+    },
+    {
+      "date": "2026-07-24",
+      "description": "OFFICEWORKS 0142 AUBURN",
+      "amountCents": -9650,
+      "kind": "policy",
+      "accountCode": 450,
+      "alsoAccept": [
+        327,
+        470
+      ],
+      "why": "Office supplies, materials, or a small computer item — $96 does not say which."
+    },
+    {
+      "date": "2026-07-28",
+      "description": "AGL ENERGY 3820119",
+      "amountCents": -34210,
+      "kind": "settled",
+      "accountCode": 360
+    },
+    {
+      "date": "2026-07-31",
+      "description": "RENT WORKSHOP 12 SILVERWATER RD",
+      "amountCents": -330000,
+      "kind": "settled",
+      "accountCode": 480
+    },
+    {
+      "date": "2026-08-03",
+      "description": "ATO PAYMENT 5512983",
+      "amountCents": -295000,
+      "kind": "abstain",
+      "why": "Could be PAYG withholding (630), GST payable (810), a PAYG instalment (640), income tax (840) or a general taxation payment (580). The description cannot say. Coding this confidently puts a wrong figure on a BAS."
+    },
+    {
+      "date": "2026-08-05",
+      "description": "MITRE 10 GRANVILLE",
+      "amountCents": -21545,
+      "kind": "policy",
+      "accountCode": 500,
+      "alsoAccept": [
+        328,
+        327
+      ],
+      "why": "Same call as Bunnings."
+    },
+    {
+      "date": "2026-08-06",
+      "description": "ACCOUNT KEEPING FEE",
+      "amountCents": -1500,
+      "kind": "policy",
+      "accountCode": 320,
+      "alsoAccept": [
+        325
+      ],
+      "why": "The supplied chart has two bank-fee accounts, 320 Bank Fees and 325 Bank Charges (Non-GST), both GST-free. Which one a firm uses is its call; the BAS is the same."
+    },
+    {
+      "date": "2026-08-10",
+      "description": "DIRECT CREDIT CONCRETE PLUS PTY LTD INV 5578",
+      "amountCents": 660000,
+      "kind": "settled",
+      "accountCode": 200
+    },
+    {
+      "date": "2026-08-11",
+      "description": "LOAN REPAYMENT WESTPAC EQUIP FIN",
+      "amountCents": -106619,
+      "kind": "settled",
+      "accountCode": 650,
+      "why": "Principal to the loan repayments account (650, flagged for the advisor: typed as an expense in the supplied chart). The interest portion is split at acceptance from the loan schedule, not guessed here."
+    },
+    {
+      "date": "2026-08-12",
+      "description": "VISA PURCHASE SHELL COLES EXPRESS 4423",
+      "amountCents": -14230,
+      "kind": "settled",
+      "accountCode": 420
+    },
+    {
+      "date": "2026-08-17",
+      "description": "PAYROLL RUN 15 WAGES",
+      "amountCents": -480000,
+      "kind": "policy",
+      "accountCode": 600,
+      "alsoAccept": [
+        370
+      ]
+    },
+    {
+      "date": "2026-08-17",
+      "description": "AUSTRALIANSUPER CLEARING HOUSE",
+      "amountCents": -52800,
+      "kind": "settled",
+      "accountCode": 610
+    },
+    {
+      "date": "2026-08-19",
+      "description": "SYDNEY WATER",
+      "amountCents": -18640,
+      "kind": "abstain",
+      "why": "The supply of water is GST-free but a Sydney Water bill carries taxable service charges too, so the split decides the BAS figure. Account 360 is GST_ON_EXPENSES and 365 is GST_FREE_EXPENSES — picking either one blind puts a wrong number at 1B. The tax advisor sets the policy."
+    },
+    {
+      "date": "2026-08-21",
+      "description": "FORMWORK PLUS SUBCONTRACT INV 117",
+      "amountCents": -275000,
+      "kind": "settled",
+      "accountCode": 530,
+      "why": "Also a TPAR-reportable payment: the subcontractor link is set at review."
+    },
+    {
+      "date": "2026-08-24",
+      "description": "ADOBE SYSTEMS SOFTWARE",
+      "amountCents": -8999,
+      "kind": "policy",
+      "accountCode": 470,
+      "why": "Software or a subscription. Same GST either way."
+    },
+    {
+      "date": "2026-08-28",
+      "description": "BP CONNECT SMITHFIELD",
+      "amountCents": -12175,
+      "kind": "settled",
+      "accountCode": 420
+    },
+    {
+      "date": "2026-08-31",
+      "description": "RENT WORKSHOP 12 SILVERWATER RD",
+      "amountCents": -330000,
+      "kind": "settled",
+      "accountCode": 480
+    },
+    {
+      "date": "2026-08-31",
+      "description": "INTEREST CHARGED",
+      "amountCents": -1240,
+      "kind": "settled",
+      "accountCode": 400
+    },
+    {
+      "date": "2026-09-02",
+      "description": "PROGRESS CLAIM 2044 ROUSE HILL",
+      "amountCents": 1430000,
+      "kind": "settled",
+      "accountCode": 200
+    },
+    {
+      "date": "2026-09-04",
+      "description": "PARRAMATTA CITY COUNCIL RATES",
+      "amountCents": -64000,
+      "kind": "settled",
+      "accountCode": 365
+    },
+    {
+      "date": "2026-09-07",
+      "description": "ACCOUNT KEEPING FEE",
+      "amountCents": -1500,
+      "kind": "policy",
+      "accountCode": 320,
+      "alsoAccept": [
+        325
+      ],
+      "why": "The supplied chart has two bank-fee accounts, 320 Bank Fees and 325 Bank Charges (Non-GST), both GST-free. Which one a firm uses is its call; the BAS is the same."
+    },
+    {
+      "date": "2026-09-08",
+      "description": "HARVEY NORMAN COMMERCIAL LAPTOP",
+      "amountCents": -219900,
+      "kind": "abstain",
+      "why": "$2,199 sits near the instant asset write-off threshold, which this system has no verified value for. Expensing it (340 Computer Equipment and Software, or 550 Tools and Equipment) or capitalising it is a tax decision, not a coding one."
+    }
   ]
 }

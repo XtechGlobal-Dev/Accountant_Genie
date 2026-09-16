@@ -22,7 +22,12 @@ import { AU_CHART_OF_ACCOUNTS } from "../src/au/coa.js";
 import { getAIProvider } from "../src/ai/index.js";
 import type { ClassificationInput, ClassificationResult } from "../src/ai/types.js";
 
-process.loadEnvFile(".env");
+// The environment may already be set (CI, a host): a missing .env is not an error.
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // .env is absent — the environment is expected to provide the variables.
+}
 
 interface GoldenCase {
   date: string;

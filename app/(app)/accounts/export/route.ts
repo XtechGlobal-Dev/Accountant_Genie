@@ -1,15 +1,18 @@
 import { requireSession } from "@/server/core/session";
+import { can } from "@/server/core/permissions";
 import { chartToCsv } from "@/server/modules/accounts/service";
 
 /**
  * GET /accounts/export[?client=<id>] — the chart of accounts as CSV.
  *
- * Resolve the session, call the service, return the file. The client ID is
- * request-supplied and is scoped by the firm inside the service's query, so a
- * foreign ID simply yields the firm-wide chart.
+ * Resolve the session, check the permission, call the service, return the
+ * file. The client ID is request-supplied and is scoped by the firm inside the
+ * service's query, so a foreign ID simply yields the firm-wide chart.
  */
 export async function GET(request: Request) {
-  const { firmId } = await requireSession();
+  const session = await requireSession();
+  if (!can(session, "report:export")) return new Response("Forbidden", { status: 403 });
+  const { firmId } = session;
   const clientId = new URL(request.url).searchParams.get("client") ?? undefined;
 
   const csv = await chartToCsv(firmId, clientId);

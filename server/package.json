@@ -22,6 +22,7 @@
     "test:idor": "vitest run --config vitest.idor.config.ts",
     "typecheck": "tsc --noEmit -p .",
     "fiskil:check": "tsx --conditions=react-server scripts/check-fiskil.ts",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "db:sync-accounts": "tsx --conditions=react-server scripts/sync-accounts.ts"
   },
   "prisma": {

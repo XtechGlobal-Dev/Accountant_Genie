@@ -14,18 +14,20 @@ import { RULES_VERSION, reconcileConfig } from "./config";
 import { matchMemory, type MemoryCandidate } from "./memory";
 import * as repo from "./repository";
 import { scoreRisk } from "./risk";
-import { applyRules } from "./rules";
+import { applyRules, RULES } from "./rules";
 
 /**
  * The reconciliation pipeline, in the order the skill prescribes:
  *
- *   coding memory → deterministic rules → AI (only what survives)
- *     → validation gate → GST engine → risk → route
+ *   coding memory → deterministic rules → candidate accounts → AI (only what
+ *   survives) → validation gate → GST engine → risk → route
  *
  * Every stage may answer Unknown. Nothing here writes to the ledger: the
  * output is a coding on the bank transaction plus a flag saying whether a
  * person has to look before it can be accepted. Acceptance — and the journal
- * — is a human act in `service.ts`.
+ * — is a human act in `service.ts`, and that is also where the journal is
+ * proven to balance: a bank posting is built from mirrored lines, so an
+ * unbalanced entry is unrepresentable rather than merely checked.
  *
  * See .claude/skills/reconciliation-engine/SKILL.md and ai-classification.
  */
@@ -47,7 +49,7 @@ interface Decision {
   reasoning: string;
   needsReview: boolean;
   memoryRuleId: string | null;
-  meta: Record<string, string | number | null>;
+  meta: Record<string, string | number | boolean | null | Record<string, string | number | boolean | null>>;
 }
 
 /** The engine can always say "I don't know". This is that answer. */
@@ -75,11 +77,11 @@ export async function runEngine(
   if (!client) return null;
 
   const config = reconcileConfig();
-  const [transactions, visible, memoryRows, reviewed] = await Promise.all([
+  const [transactions, visible, memoryRows, codings] = await Promise.all([
     repo.listForEngine(firmId, client.id, ids),
     accounts.listPostableAccounts(firmId, client.id),
     repo.listMemoryForClient(firmId, client.id),
-    repo.reviewedDescriptions(firmId, client.id),
+    repo.reviewedCodings(firmId, client.id),
   ]);
 
   const stats: ReconcileStats = {
@@ -91,6 +93,9 @@ export async function runEngine(
     needsReview: 0,
     autoCoded: 0,
     aiFailure: null,
+    preAiRatio: 0,
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 },
+    warnings: [],
   };
   if (transactions.length === 0) return stats;
 
@@ -110,9 +115,17 @@ export async function runEngine(
 
   // Memory rules are re-validated before use: a rule pointing at an account
   // that is now inactive, or whose treatment no longer fits, does not apply.
+  // A rule skipped here is counted, so a firm can see its rules have rotted.
+  let staleMemoryRules = 0;
   const memory: MemoryCandidate[] = memoryRows
-    .filter((rule) => rule.account.isActive && rule.account.type !== "UNKNOWN")
-    .filter((rule) => treatmentAllowedFor(rule.account.type as Exclude<AccountType, "UNKNOWN">, rule.gstTreatment))
+    .filter((rule) => {
+      const ok =
+        rule.account.isActive &&
+        rule.account.type !== "UNKNOWN" &&
+        treatmentAllowedFor(rule.account.type as Exclude<AccountType, "UNKNOWN">, rule.gstTreatment);
+      if (!ok) staleMemoryRules += 1;
+      return ok;
+    })
     .map((rule) => ({
       id: rule.id,
       clientId: rule.clientId,
@@ -123,9 +136,13 @@ export async function runEngine(
       evidenceCount: rule.evidenceCount,
     }));
   const memoryVersion = `memory-${memoryRows.length}`;
+  if (staleMemoryRules > 0) {
+    stats.warnings.push(`${staleMemoryRules} Coding Memory rule${staleMemoryRules === 1 ? "" : "s"} point at an inactive account or an invalid treatment and were skipped — review them on the Coding Memory page`);
+  }
 
   const decisions = new Map<string, Decision>();
   const forAi: typeof transactions = [];
+  const stamp = () => new Date().toISOString();
 
   for (const t of transactions) {
     const hit = matchMemory(memory, t.normalised);
@@ -141,7 +158,7 @@ export async function runEngine(
           reasoning: `Coding Memory: "${hit.pattern}" → ${account.code} ${account.name}`,
           needsReview: false,
           memoryRuleId: hit.id,
-          meta: { tier: "memory", rulesVersion: RULES_VERSION, memoryVersion },
+          meta: { tier: "memory", rulesVersion: RULES_VERSION, memoryVersion, decidedAt: stamp() },
         });
         continue;
       }
@@ -160,7 +177,7 @@ export async function runEngine(
           reasoning: rule.reason,
           needsReview: rule.needsReview,
           memoryRuleId: null,
-          meta: { tier: "rule", rule: rule.rule, rulesVersion: RULES_VERSION, memoryVersion },
+          meta: { tier: "rule", rule: rule.rule, rulesVersion: RULES_VERSION, memoryVersion, decidedAt: stamp() },
         });
         continue;
       }
@@ -175,7 +192,7 @@ export async function runEngine(
     const provider = getAIProvider();
     // description is what separates two similarly named accounts, so it is
     // part of what the model sees rather than withheld.
-    const candidates = visible.map((a) => ({
+    const chart = visible.map((a) => ({
       code: a.code,
       name: a.name,
       type: a.type,
@@ -188,6 +205,18 @@ export async function runEngine(
       gstTreatment: m.gstTreatment,
     }));
 
+    // Candidate generation: the accounts this client's people have actually
+    // used — reviewed codings, memory targets, rule targets — as a short list
+    // the model prefers. Never a restriction: the gate validates against the
+    // whole chart, and Unknown is always allowed.
+    const candidateIds = new Set<string>();
+    for (const set of codings.values()) for (const id of set) candidateIds.add(id);
+    for (const m of memory) candidateIds.add(m.accountId);
+    const candidateCodes = [...candidateIds]
+      .map((id) => byId.get(id)?.code)
+      .filter((code): code is number => code !== undefined);
+    for (const rule of RULES) if (byCode.has(rule.accountCode)) candidateCodes.push(rule.accountCode);
+
     for (let i = 0; i < forAi.length; i += config.batchSize) {
       const batch = forAi.slice(i, i + config.batchSize);
       const response = await provider.classifyTransactions({
@@ -198,15 +227,23 @@ export async function runEngine(
           date: t.date.toISOString().slice(0, 10),
           feedCategory: t.feedCategory,
           feedSubcategory: t.feedSubcategory,
+          merchantCode: t.feedMerchantCode,
         })),
         client: {
           industry: client.industry,
           entityType: client.entityType,
           gstRegistered: client.gstRegistered,
         },
-        accounts: candidates,
+        accounts: chart,
         memory: hints,
+        candidateCodes: [...new Set(candidateCodes)].sort((a, b) => a - b),
       });
+
+      stats.tokens.calls += 1;
+      stats.tokens.input += response.meta.inputTokens ?? 0;
+      stats.tokens.output += response.meta.outputTokens ?? 0;
+      stats.tokens.cacheRead += response.meta.cacheReadTokens ?? 0;
+      stats.tokens.cacheWrite += response.meta.cacheWriteTokens ?? 0;
 
       const meta = {
         tier: "ai",
@@ -215,6 +252,7 @@ export async function runEngine(
         promptVersion: response.meta.promptVersion,
         rulesVersion: RULES_VERSION,
         memoryVersion,
+        inputHash: response.meta.inputHash ?? null,
         inputTokens: response.meta.inputTokens ?? null,
         outputTokens: response.meta.outputTokens ?? null,
         cacheReadTokens: response.meta.cacheReadTokens ?? null,
@@ -224,7 +262,7 @@ export async function runEngine(
       if (response.failure) {
         stats.aiFailure = `${response.failure.kind}: ${response.failure.detail}`;
         for (const t of batch) {
-          decisions.set(t.id, unknownDecision(unknown, `AI tier ${response.failure.kind} — routed to review`, "AI", meta));
+          decisions.set(t.id, unknownDecision(unknown, `AI tier ${response.failure.kind} — routed to review`, "AI", { ...meta, decidedAt: stamp() }));
         }
         continue;
       }
@@ -233,9 +271,20 @@ export async function runEngine(
       for (const t of batch) {
         const result = byRef.get(t.id);
         if (!result) {
-          decisions.set(t.id, unknownDecision(unknown, "AI returned no result for this transaction", "AI", meta));
+          decisions.set(t.id, unknownDecision(unknown, "AI returned no result for this transaction", "AI", { ...meta, decidedAt: stamp() }));
           continue;
         }
+
+        // The raw proposal is kept whatever the gate decides, so a rejected
+        // suggestion can be reproduced when someone asks "why did it say that?".
+        const proposal = {
+          accountCode: result.accountCode,
+          gstTreatment: result.gstTreatment,
+          confidence: result.confidence,
+          reason: result.reason,
+          needsReview: result.needsReview,
+        };
+        const lineage = { ...meta, proposal, decidedAt: stamp() };
 
         // The validation gate. Every proposal, no exceptions.
         const account = result.accountCode === CODE_UNKNOWN ? null : byCode.get(result.accountCode);
@@ -246,8 +295,9 @@ export async function runEngine(
           result.gstTreatment !== "UNALLOCATED" &&
           treatmentAllowedFor(account.type as Exclude<AccountType, "UNKNOWN">, result.gstTreatment);
         const confidentEnough = result.confidence >= config.confidenceFloor;
+        const abstained = result.needsReview && result.accountCode === CODE_UNKNOWN;
 
-        if (!account || !treatmentOk || !confidentEnough || result.needsReview && result.accountCode === CODE_UNKNOWN) {
+        if (!account || !treatmentOk || !confidentEnough || abstained) {
           const why = !account
             ? result.accountCode === CODE_UNKNOWN
               ? result.reason || "AI abstained"
@@ -255,7 +305,7 @@ export async function runEngine(
             : !treatmentOk
               ? `AI proposed ${result.gstTreatment} on ${account.name}, which is not a valid pairing`
               : `AI confidence ${result.confidence.toFixed(2)} is below the floor`;
-          decisions.set(t.id, unknownDecision(unknown, why, "AI", meta));
+          decisions.set(t.id, unknownDecision(unknown, why, "AI", lineage));
           continue;
         }
 
@@ -268,9 +318,16 @@ export async function runEngine(
           reasoning: result.reason,
           needsReview: result.needsReview || result.confidence < config.autoConfidence,
           memoryRuleId: null,
-          meta,
+          meta: lineage,
         });
       }
+    }
+
+    // A cold cache on every call means something volatile crept into the
+    // stable prefix, and the firm is paying full price for the chart of
+    // accounts on every batch. Only a signal from the second call on.
+    if (stats.tokens.calls > 1 && stats.tokens.cacheRead === 0 && stats.tokens.input > 0) {
+      stats.warnings.push("No prompt-cache hits across the run's AI calls — the chart of accounts is being resent in full each time");
     }
   }
 
@@ -285,10 +342,14 @@ export async function runEngine(
           client.gstRegistered && d.gstTreatment !== "UNALLOCATED"
             ? gstFromGross(t.amountCents, d.gstTreatment)
             : 0;
+        // Novelty: nobody has reviewed this merchant. Inconsistency: someone
+        // has, and coded it somewhere else than this decision proposes.
+        const reviewedTo = codings.get(t.normalised);
         const risk = scoreRisk(
           {
             amountCents: t.amountCents,
-            novel: !reviewed.has(t.normalised),
+            novel: reviewedTo === undefined,
+            inconsistent: reviewedTo !== undefined && reviewedTo.size > 0 && !reviewedTo.has(d.accountId) && d.gstTreatment !== "UNALLOCATED",
             gstTreatment: d.gstTreatment,
             accountType: d.accountType,
           },
@@ -320,6 +381,16 @@ export async function runEngine(
         if (needsReview) stats.needsReview += 1;
         else stats.autoCoded += 1;
       }
+
+      stats.preAiRatio = stats.processed > 0 ? (stats.byMemory + stats.byRule) / stats.processed : 0;
+      // The skill's target: rules and memory resolve most of the file before
+      // any AI call. Below it on a run of any size, the fix is more rules.
+      if (stats.processed >= 20 && stats.preAiRatio < config.preAiTarget) {
+        stats.warnings.push(
+          `Rules and memory resolved ${Math.round(stats.preAiRatio * 100)}% before the AI tier; the target is ${Math.round(config.preAiTarget * 100)}%`,
+        );
+      }
+
       await repo.touchMemoryRules(tx, [...new Set(touchedRules)]);
       await recordAudit(tx, {
         firmId,
@@ -328,11 +399,13 @@ export async function runEngine(
         action: "RECONCILIATION_RUN",
         entityType: "Client",
         entityId: client.id,
-        after: { ...stats, rulesVersion: RULES_VERSION, memoryVersion },
+        after: { ...stats, rulesVersion: RULES_VERSION, memoryVersion, subset: ids ? ids.length : null },
       });
     },
     { timeout: 120_000 },
   );
+
+  for (const warning of stats.warnings) console.warn(`[reconcile] ${client.id}: ${warning}`);
 
   return stats;
 }

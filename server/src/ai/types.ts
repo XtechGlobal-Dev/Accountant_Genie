@@ -51,6 +51,7 @@ export type ClassificationBatch = z.infer<typeof ClassificationBatchSchema>;
 /** One transaction presented to the model. Deliberately minimal — see PII rules. */
 export interface ClassificationInputTx {
   ref: string;
+  /** Masked before it reaches a provider — see `maskDescription` in prompt.ts. */
   description: string;
   amountCents: number;
   date: string; // ISO yyyy-mm-dd
@@ -64,6 +65,8 @@ export interface ClassificationInputTx {
    */
   feedCategory?: string | null;
   feedSubcategory?: string | null;
+  /** ISO 18245 merchant category code from the feed, when present. A standard, unlike the category. */
+  merchantCode?: string | null;
 }
 
 export interface CandidateAccount {
@@ -87,14 +90,24 @@ export interface ClassificationInput {
     entityType: string;
     gstRegistered: boolean;
   };
+  /** The whole chart the client may post to. Every proposal is validated against it. */
   accounts: CandidateAccount[];
   memory: MemoryHint[];
+  /**
+   * Candidate generation: the codes this client's people have actually used —
+   * reviewed codings, memory targets, rule targets. Shown to the model as the
+   * short list to prefer. Never a restriction: the chart above stays the
+   * universe, the gate validates against it, and Unknown is always allowed.
+   */
+  candidateCodes?: number[];
 }
 
 export interface ProviderMeta {
   provider: string;
   model: string;
   promptVersion: string;
+  /** SHA-256 of exactly what was sent, so a decision can be tied to its input. */
+  inputHash?: string;
   /** Populated when the provider reports usage. */
   inputTokens?: number;
   outputTokens?: number;
@@ -107,6 +120,11 @@ export interface ProviderMeta {
   cacheWriteTokens?: number;
 }
 
+export interface ProviderFailure {
+  kind: "refusal" | "invalid_output" | "error";
+  detail: string;
+}
+
 export interface ClassificationResponse {
   results: ClassificationResult[];
   meta: ProviderMeta;
@@ -114,13 +132,53 @@ export interface ClassificationResponse {
    * Set when the provider declined or failed. The caller routes the whole
    * batch to human review — never to a default coding.
    */
-  failure?: { kind: "refusal" | "invalid_output" | "error"; detail: string };
+  failure?: ProviderFailure;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Subcontractor identification                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A proposal that a payment went to a subcontractor. The model matches a
+ * payment to one on the register, or proposes a name for one that is not.
+ * A person confirms; nothing is created or linked by the model.
+ */
+export const SubcontractorResultSchema = z.object({
+  ref: z.string(),
+  /** The id of a known subcontractor from the supplied register, or null. */
+  knownId: z.string().nullable(),
+  /** A trading name to add, when the payee is not on the register. */
+  proposedName: z.string().nullable(),
+  /** 0..1 — validated after parsing. */
+  confidence: z.number(),
+  reason: z.string(),
+});
+
+export const SubcontractorBatchSchema = z.object({
+  results: z.array(SubcontractorResultSchema),
+});
+
+export type SubcontractorResult = z.infer<typeof SubcontractorResultSchema>;
+
+export interface SubcontractorInput {
+  transactions: { ref: string; description: string; amountCents: number; date: string }[];
+  /** The client's register, so the model links rather than duplicates. */
+  known: { id: string; name: string; abn: string | null }[];
+  client: { industry: string | null };
+}
+
+export interface SubcontractorResponse {
+  results: SubcontractorResult[];
+  meta: ProviderMeta;
+  failure?: ProviderFailure;
 }
 
 export interface AccountingAIProvider {
   readonly name: string;
   readonly model: string;
   classifyTransactions(input: ClassificationInput): Promise<ClassificationResponse>;
+  identifySubcontractors(input: SubcontractorInput): Promise<SubcontractorResponse>;
 }
 
 /**
@@ -135,4 +193,11 @@ export function sanitiseResult(r: ClassificationResult): ClassificationResult {
     // A model that returns Unknown, or an out-of-range confidence, always reviews.
     needsReview: r.needsReview || r.accountCode === 0 || confidence <= 0,
   };
+}
+
+/** Same discipline for subcontractor proposals: clamp, and never both a known id and a new name. */
+export function sanitiseSubcontractor(r: SubcontractorResult): SubcontractorResult {
+  const confidence = Number.isFinite(r.confidence) ? Math.min(1, Math.max(0, r.confidence)) : 0;
+  const proposedName = r.knownId ? null : (r.proposedName?.trim().slice(0, 120) || null);
+  return { ...r, confidence, proposedName };
 }
