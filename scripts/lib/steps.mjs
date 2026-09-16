@@ -132,7 +132,13 @@ export async function generateClient() {
 export async function pushSchema() {
   log.step("Database schema");
   await wakeDatabase();
-  await runPrisma(["db", "push"]);
+
+  try {
+    await runPrisma(["db", "push"]);
+  } catch (err) {
+    reportUnexecutableChanges(err);
+    throw err;
+  }
   log.ok("schema in sync");
 
   const constraints = path.join(SERVER, "prisma", "sql", "constraints.sql");
@@ -140,6 +146,49 @@ export async function pushSchema() {
     await runPrisma(["db", "execute", "--file", "prisma/sql/constraints.sql"]);
     log.ok("ledger CHECK constraints applied");
   }
+}
+
+/**
+ * `db push` computes one diff from the live database to schema.prisma and has
+ * no history to consult, so a change that needs data moved — a column becoming
+ * an enum, a required column added to a populated table — it can only refuse.
+ * The refusal is correct; the stack trace around it is not an explanation.
+ *
+ * Almost always the database was built with `db push` before the migration
+ * history existed, and the migration that carries the missing data step is
+ * already in prisma/migrations, unrun. Baselining is the documented way out
+ * (CLAUDE.md §8) and keeps the data; --force-reset destroys it, so it is named
+ * last and named for what it does.
+ *
+ * Prints and returns; the caller still throws, because the run must stop.
+ */
+function reportUnexecutableChanges(err) {
+  const out = err.out ?? "";
+  if (!/changes that cannot be executed/i.test(out)) return;
+
+  const blockers = out
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("•"))
+    .map((line) => line.trim().replace(/^•\s*/, ""));
+
+  log.fail("db push cannot apply this schema to the data already in the database");
+  log.plain();
+  for (const blocker of blockers) log.plain(`      ${c.dim("·")} ${blocker}`);
+  if (blockers.length > 0) log.plain();
+
+  log.plain(`    ${c.bold("Why:")} db push diffs the database against the schema with no history to`);
+  log.plain(`    consult, so it cannot move data. A migration in ${c.bold("server/prisma/migrations")}`);
+  log.plain(`    probably already does — this database was built by db push and never ran it.`);
+  log.plain();
+  log.plain(`    ${c.bold("To keep your data")} ${c.dim("— baseline once, then apply the rest:")}`);
+  log.plain(`      ${c.cyan("cd server")}`);
+  log.plain(`      ${c.cyan('npx prisma migrate resolve --applied "<each migration already in the DB>"')}`);
+  log.plain(`      ${c.cyan("npx prisma migrate deploy")}`);
+  log.plain(`      ${c.cyan("npm run db:backfill-tax-rules")}   ${c.dim("(if a tax rule step ran)")}`);
+  log.plain();
+  log.plain(`    ${c.yellow("To start over")} ${c.dim("— local development only, and it destroys every row:")}`);
+  log.plain(`      ${c.cyan("npm run db:reset")}`);
+  log.plain();
 }
 
 /**

@@ -48,13 +48,28 @@ log.plain(`  ${c.bold(c.blue("Accountant Genie"))} ${c.dim("· local development
 ensureEnv();
 await ensureDependencies();
 
-if (has("--skip-db")) {
-  log.step("Database");
-  log.warn("skipped (--skip-db)");
-} else {
-  await generateClient();
-  await pushSchema();
-  await seedIfEmpty({ force: has("--seed") });
+// The preflight is where things go wrong, and a step that fails has usually
+// already said why. Report the failure as a failure rather than as a stack
+// trace from inside a child-process helper, and keep whatever the tool said.
+try {
+  if (has("--skip-db")) {
+    log.step("Database");
+    log.warn("skipped (--skip-db)");
+  } else {
+    await generateClient();
+    await pushSchema();
+    await seedIfEmpty({ force: has("--seed") });
+  }
+} catch (err) {
+  log.plain();
+  log.fail(err.message);
+  const out = (err.out ?? "").trim();
+  if (out) {
+    log.plain();
+    for (const line of out.split(/\r?\n/)) log.plain(`    ${c.dim(line)}`);
+  }
+  log.plain();
+  process.exit(1);
 }
 
 log.step("Starting");
