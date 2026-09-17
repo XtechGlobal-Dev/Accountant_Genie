@@ -1,5 +1,5 @@
 # CLAUDE.md
-# test
+
 Guidance for Claude Code when working in this repository.
 
 ---
