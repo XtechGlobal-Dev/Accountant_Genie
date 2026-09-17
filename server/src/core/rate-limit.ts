@@ -1,7 +1,7 @@
 import "server-only";
 
 import { db } from "@/server/core/db";
-import { rethrowIfSchemaBehind } from "@/server/core/schema-check";
+import { rethrowKnownDbFailure } from "@/server/core/schema-check";
 
 /**
  * A fixed-window counter in the database, so it holds across processes and
@@ -22,7 +22,7 @@ export interface RateLimitResult {
 
 export async function consume(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
   const now = new Date();
-  const existing = await db.rateLimit.findUnique({ where: { key } }).catch(rethrowIfSchemaBehind);
+  const existing = await db.rateLimit.findUnique({ where: { key } }).catch(rethrowKnownDbFailure);
 
   if (!existing || now.getTime() - existing.windowStart.getTime() >= windowMs) {
     await db.rateLimit.upsert({

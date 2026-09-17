@@ -15,13 +15,22 @@ import { PrismaClient, type Prisma } from "@/generated/prisma";
 // every edit until Postgres refuses connections. Cache the client on globalThis.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
+const CONNECT_TIMEOUT_MS = 10_000;
+
 function createClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set. Copy .env.example to .env.");
   }
   // Prisma 7 connects through a driver adapter rather than a schema-level url.
-  const adapter = new PrismaPg({ connectionString });
+  //
+  // `connectionTimeoutMillis` bounds how long a request can hang on a link that
+  // is dropping packets. Without it the pg pool waits on the OS's SYN retries,
+  // the request sits for twenty-odd seconds, and the eventual ETIMEDOUT
+  // surfaces through Prisma's batch interpreter as an unhandled
+  // "object null is not iterable" — a crash rather than an error. Ten seconds
+  // is well above Neon's cold start and well below anyone's patience.
+  const adapter = new PrismaPg({ connectionString, connectionTimeoutMillis: CONNECT_TIMEOUT_MS });
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
