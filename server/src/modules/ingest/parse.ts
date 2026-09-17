@@ -77,14 +77,25 @@ const HEADER_HINTS: Record<keyof Omit<ColumnMap, "positional">, RegExp> = {
  */
 const DESCRIPTION_FALLBACK = /^(payee|reference|transaction reference)$/i;
 
+/**
+ * A header as the hints see it: case folded, and `money_in`, `Money-In`,
+ * `running.balance` read as the words they are. Exports written by software
+ * rather than by a bank use snake_case for the same columns; the hints stay
+ * in plain words and the header is brought to them. The original spelling is
+ * what the column map keeps, because that is what the row lookup matches.
+ */
+function headerWords(header: string): string {
+  return header.trim().replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /** Map headers to fields, or null when the essentials cannot be found. */
 export function detectColumns(headers: readonly string[]): ColumnMap | null {
   const clean = headers.map((h) => h.trim());
   const find = (key: keyof typeof HEADER_HINTS) =>
-    clean.find((h) => HEADER_HINTS[key].test(h));
+    clean.find((h) => HEADER_HINTS[key].test(headerWords(h)));
 
   const date = find("date");
-  const description = find("description") ?? clean.find((h) => DESCRIPTION_FALLBACK.test(h));
+  const description = find("description") ?? clean.find((h) => DESCRIPTION_FALLBACK.test(headerWords(h)));
   const amount = find("amount");
   const debit = find("debit");
   const credit = find("credit");

@@ -153,6 +153,26 @@ describe("parseStatementCsv", () => {
     expect(result.rows[0]?.index).toBe(6);
   });
 
+  it("reads snake_case headers as the words they are, and ignores the extra columns a test fixture carries", () => {
+    // A fixture written by software: underscored headers, month-name dates,
+    // plain numbers, and expectation columns after the statement columns.
+    const fixture = [
+      "line_number,date,reference,description,money_in,money_out,running_balance,expected_account,expected_bas_gst,sample_flag",
+      "1,02 Oct 2026,EFT-1002,EFTPOS settlement - sales net of merchant fee,54450.00,,129450.00,Sales clearing / Business Bank,G1 and 1A from POS report,FICTIONAL",
+      '2,04 Oct 2026,SUP-1004,Greenfield Produce Markets - basic ingredients,,4400.00,125050.00,Food Purchases - GST-free Ingredients,"G11 $4,400; GST credit nil",FICTIONAL',
+      '3,09 Oct 2026,PAY-1009,Payroll batch - fortnight net wages,,22000.00,96850.00,Wages and PAYG Withholding Payable,"W1/W2 from payroll register; not G10/G11",FICTIONAL',
+    ].join("\n");
+    const result = parseStatementCsv(fixture);
+    expect(result.failed).toEqual([]);
+    expect(result.columns).toMatchObject({ date: "date", description: "description", credit: "money_in", debit: "money_out", balance: "running_balance" });
+    expect(result.rows.map((r) => [r.date.toISOString().slice(0, 10), r.amountCents, r.description, r.balanceCents])).toEqual([
+      ["2026-10-02", 5_445_000, "EFTPOS settlement - sales net of merchant fee", 12_945_000],
+      ["2026-10-04", -440_000, "Greenfield Produce Markets - basic ingredients", 12_505_000],
+      ["2026-10-09", -2_200_000, "Payroll batch - fortnight net wages", 9_685_000],
+    ]);
+    expect(detectColumns(["Date", "Money-In", "Money-Out", "Description"])).toMatchObject({ credit: "Money-In", debit: "Money-Out" });
+  });
+
   it("falls back to a Reference column only when nothing names the description", () => {
     expect(detectColumns(["Date", "Reference", "Amount"])?.description).toBe("Reference");
     expect(detectColumns(["Date", "Reference", "Transaction description", "Amount"])?.description).toBe("Transaction description");
