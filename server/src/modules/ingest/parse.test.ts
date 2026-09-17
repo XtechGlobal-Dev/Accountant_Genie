@@ -122,6 +122,49 @@ describe("parseStatementCsv", () => {
     ]);
   });
 
+  it("finds the header below a bank's letterhead, codes from the description not the reference, and skips the footer", () => {
+    // The shape a "business bank statement" export takes: preamble, a
+    // summary row that itself mentions Money in / Money out, the real
+    // header, the lines, then a reconciliation note and a page footer.
+    const statement = [
+      "SOUTHERN CROSS,,,BUSINESS BANK STATEMENT,,",
+      "Account holder,Singh Kitchen Pty Ltd,Statement period,1 September 2026 to 30 September 2026,,",
+      "BSB / account,000-000 / XXXX 4821,Currency,AUD,,",
+      "Opening balance,Money in,Money out,Closing balance,Transaction count,",
+      '"$25,000.00","$11,000.00","$18,810.00","$17,190.00",,5',
+      "Date,Reference,Transaction description,Money in,Money out,Balance",
+      '02-Sep-26,EFT-0902,EFTPOS settlement - restaurant sales,"$11,000.00",,"$36,000.00"',
+      '04-Sep-26,SUP-0904,Greenfield Produce Markets - GST-free ingredients,,"$2,200.00","$33,800.00"',
+      '10-Sep-26,CAPEX-0910,Precision Kitchen Systems - commercial oven,,"$11,000.00","$17,300.00"',
+      '"Reconciliation: $25,000.00 + $11,000.00 - $18,810.00 = $17,190.00.",,,,,',
+      "SAMPLE / FICTIONAL - Singh Kitchen,,,,,Page 1",
+    ].join("\n");
+    const result = parseStatementCsv(statement);
+    expect(result.failed).toEqual([]);
+    expect(result.columns).toMatchObject({ date: "Date", description: "Transaction description", credit: "Money in", debit: "Money out", balance: "Balance" });
+    expect(result.rows.map((r) => [r.date.toISOString().slice(0, 10), r.amountCents, r.description, r.balanceCents])).toEqual([
+      ["2026-09-02", 1_100_000, "EFTPOS settlement - restaurant sales", 3_600_000],
+      ["2026-09-04", -220_000, "Greenfield Produce Markets - GST-free ingredients", 3_380_000],
+      ["2026-09-10", -1_100_000, "Precision Kitchen Systems - commercial oven", 1_730_000],
+    ]);
+    // Five letterhead rows above the header, two note rows below the data.
+    expect(result.skipped).toBe(7);
+    // Row indexes still point at the file, for the failed-rows report.
+    expect(result.rows[0]?.index).toBe(6);
+  });
+
+  it("falls back to a Reference column only when nothing names the description", () => {
+    expect(detectColumns(["Date", "Reference", "Amount"])?.description).toBe("Reference");
+    expect(detectColumns(["Date", "Reference", "Transaction description", "Amount"])?.description).toBe("Transaction description");
+  });
+
+  it("still reports a row with an amount but no readable date", () => {
+    const result = parseStatementCsv(["Date,Description,Amount", "32/13/2026,Impossible,-10.00", "01/07/2026,Fine,-5.00"].join("\n"));
+    expect(result.rows).toHaveLength(1);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.reason).toMatch(/Unreadable date/);
+  });
+
   it("fails clearly when the header has no usable columns", () => {
     const result = parseStatementCsv("Foo,Bar\n1,2");
     expect(result.rows).toEqual([]);
