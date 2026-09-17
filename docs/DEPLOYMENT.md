@@ -273,10 +273,117 @@ git push                                 # Render migrates, then Vercel builds
 # Check production migration state without deploying:
 npm run db:status
 
-# Rotate AUTH_SECRET: change it on BOTH hosts in one sitting. Every pending
-# one-time code and every trusted device is invalidated — that is the point.
+# Rotate AUTH_SECRET: change it on BOTH hosts in one sitting. It is read in one
+# place only (hashCode, auth/service.ts), so rotating invalidates pending one-time
+# codes. Signed-in sessions and trusted devices are NOT affected: neither reads it.
 ```
 
 **Rollback.** Vercel's instant rollback reverts the app only; it does not revert a migration.
 Write migrations so the previous app version still runs against the new schema — add columns,
 do not rename them — or a rollback takes the app down.
+
+---
+
+## Appendix — environment variables
+
+Three groups. **Shared** must be identical on both hosts. **Vercel only** is what the request
+path needs. **Render only** applies if that service is a worker; a Render service running the
+full app needs the Vercel list instead.
+
+### A. Shared — identical on both hosts
+
+```
+DATABASE_URL=postgresql://USER:PASS@ep-xxxx-pooler.REGION.aws.neon.tech/DB?sslmode=verify-full
+DIRECT_DATABASE_URL=postgresql://USER:PASS@ep-xxxx.REGION.aws.neon.tech/DB?sslmode=verify-full
+AUTH_SECRET=<generate once, paste the same value both sides>
+REDIS_URL=<Render Key Value EXTERNAL connection string>
+S3_BUCKET=
+S3_REGION=ap-southeast-2
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+ANTHROPIC_API_KEY=
+```
+
+```
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+`DATABASE_URL` is the **pooled** host (contains `-pooler`); `DIRECT_DATABASE_URL` is the
+**direct** one. Swapping them makes migrations hang rather than fail cleanly.
+
+### B. Whichever host serves HTTP
+
+```
+MAIL_FROM=Accountant Genie <no-reply@yourdomain.com>
+RESEND_API_KEY=
+SUPPORT_EMAIL=
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=        # only exists after registering the endpoint
+STRIPE_PRICE_CORE_MONTHLY=
+STRIPE_PRICE_CORE_YEARLY=
+STRIPE_PRICE_GROWTH_MONTHLY=
+STRIPE_PRICE_GROWTH_YEARLY=
+STRIPE_PRICE_SCALE_MONTHLY=
+STRIPE_PRICE_SCALE_YEARLY=
+
+FISKIL_CLIENT_ID=
+FISKIL_CLIENT_SECRET=
+FISKIL_BASE_URL=https://api.fiskil.com
+FISKIL_API_VERSION=v3
+FISKIL_WEBHOOK_SECRET=        # only exists after registering the endpoint
+```
+
+### C. A worker-only Render service
+
+```
+NODE_VERSION=22
+WORKER_CONCURRENCY=2
+RESEND_API_KEY=               # same as the web host
+MAIL_FROM=                    # same as the web host
+FISKIL_CLIENT_ID=             # the feed sync job calls Fiskil
+FISKIL_CLIENT_SECRET=
+FISKIL_BASE_URL=https://api.fiskil.com
+FISKIL_API_VERSION=v3
+```
+
+A worker needs no `STRIPE_*`, no `GOOGLE_*` and no `FISKIL_WEBHOOK_SECRET`: no job calls
+Stripe, completes an OAuth exchange, or verifies an inbound webhook. It needs `AUTH_SECRET`
+only if it serves auth routes, which a worker does not — but keeping the value identical
+everywhere costs nothing and removes a class of confusion.
+
+### D. Reconciliation thresholds — both hosts, defaults shown
+
+```
+RECONCILE_BATCH_SIZE=40
+RECONCILE_CONFIDENCE_FLOOR=0.75
+RECONCILE_AUTO_CONFIDENCE=0.95
+RECONCILE_HIGH_RISK_CENTS=500000
+RECONCILE_NOVELTY_RISK_CENTS=50000
+RECONCILE_PRE_AI_TARGET=0.6
+```
+
+### Never set in production
+
+```
+DEMO_PASSWORD   # only feeds the seed, and the seed must not run in production
+OPENAI_*        # selects an alternative provider; leave unset
+```
+
+### What happens if you omit one
+
+| Omitted | Consequence |
+|---|---|
+| `DATABASE_URL` | Build still succeeds; the **first request** fails. Not silent. |
+| `DIRECT_DATABASE_URL` | Migrations fall back to the pooled URL and may hang |
+| `AUTH_SECRET` | Sign-up 500s in production — and the firm row is **already committed** when it throws, which is how you tell this apart from a schema problem |
+| `REDIS_URL` | Jobs run in-process. On Vercel they are killed mid-write; on Render they are safe |
+| `S3_*` | First upload throws, naming `S3_BUCKET` |
+| `ANTHROPIC_API_KEY` | Rules + memory tiers still run; the rest routes to human review |
+| `STRIPE_WEBHOOK_SECRET` | Plan changes never apply — the webhook is the only thing that sets a plan |
+| `FISKIL_WEBHOOK_SECRET` | `/api/webhooks/fiskil` answers 503 rather than trusting an unsigned payload |
+| `GOOGLE_*` | Google sign-in hidden; email + code still works |
+| `RESEND_API_KEY` | In production, no email is sent and no body is logged |
