@@ -8,6 +8,9 @@ import { getClientLogo } from "@/server/modules/clients/service";
  * another firm is indistinguishable from a client with no logo: 404 both
  * ways. Logos are stored outside the web root and only ever served here.
  */
+// Reads the session, so it can never be static.
+export const dynamic = "force-dynamic";
+
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { firmId } = await requireSession();

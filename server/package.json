@@ -12,6 +12,7 @@
     "db:check": "tsx scripts/check-connection.ts",
     "db:constraints": "prisma db execute --file prisma/sql/constraints.sql",
     "db:purge-demo": "tsx scripts/purge-demo.ts",
+    "db:backfill-tax-rules": "tsx --conditions=react-server scripts/backfill-tax-rules.ts",
     "generate": "prisma generate",
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",

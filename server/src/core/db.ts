@@ -28,9 +28,41 @@ function createClient(): PrismaClient {
   });
 }
 
-export const db = globalForPrisma.prisma ?? createClient();
+/**
+ * Built on first use, not on import.
+ *
+ * `next build` imports every route module to collect its configuration — even
+ * a `force-dynamic` one, which is why marking the routes was not enough on its
+ * own. A client constructed at module scope therefore demanded DATABASE_URL at
+ * BUILD time, on a machine that has no business holding production credentials.
+ * Deferring construction to the first query keeps the build a pure compile and
+ * leaves the missing-variable error where it belongs: the first request.
+ */
+let instance: PrismaClient | undefined = globalForPrisma.prisma;
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
+function client(): PrismaClient {
+  if (!instance) {
+    instance = createClient();
+    if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = instance;
+  }
+  return instance;
+}
+
+export const db: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, property) {
+    const active = client();
+    const value = Reflect.get(active, property, active);
+    // Model delegates are objects and are handed back as they are. The methods
+    // on the client itself ($transaction, $queryRaw) lose `this` without a bind.
+    return typeof value === "function" ? value.bind(active) : value;
+  },
+  has(_target, property) {
+    return property in client();
+  },
+  set(_target, property, value) {
+    return Reflect.set(client(), property, value);
+  },
+});
 
 /**
  * The transaction-scoped client passed to a callback of `db.$transaction`.
