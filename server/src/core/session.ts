@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/server/core/db";
-import { rethrowIfSchemaBehind } from "@/server/core/schema-check";
+import { rethrowKnownDbFailure } from "@/server/core/schema-check";
 import type { UserRole } from "@/generated/prisma";
 
 /**
@@ -38,9 +38,10 @@ const hash = (token: string) => createHash("sha256").update(token).digest("hex")
 /**
  * The session behind the request's cookie, or null.
  *
- * The one thing it does throw for is a database behind the schema — a stale
- * cookie against missing tables would otherwise 500 every page with a raw
- * stack trace, or loop between / and /sign-in if treated as signed out.
+ * The two things it does throw for are a database behind the schema and a
+ * database that cannot be reached. Treated as signed out, either would loop
+ * between / and /sign-in; left alone, either would 500 every page with a
+ * raw stack trace. Each becomes a typed error the error page recognises.
  */
 export async function getSession(): Promise<Session | null> {
   const jar = await cookies();
@@ -67,7 +68,7 @@ export async function getSession(): Promise<Session | null> {
         },
       },
     })
-    .catch(rethrowIfSchemaBehind);
+    .catch(rethrowKnownDbFailure);
   if (!row || row.expiresAt.getTime() < Date.now()) return null;
 
   if (Date.now() - row.lastSeenAt.getTime() > TOUCH_MS) {
