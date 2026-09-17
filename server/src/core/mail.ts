@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { MailOutcome } from "@/shared/contracts/result";
+
 /**
  * Outbound email behind one interface.
  *
@@ -11,6 +13,8 @@ import "server-only";
  * Never put a password or a session token in a message. One-time codes and
  * signed, expiring links only.
  */
+
+export type { MailOutcome };
 
 export interface MailMessage {
   to: string;
@@ -31,26 +35,34 @@ function maskEmail(email: string): string {
 }
 
 /**
- * The console transport is a development convenience, and it prints one-time
- * codes and temporary passwords. That is acceptable on a developer's own
- * machine and never in production, where a server log is shared, retained and
- * shipped elsewhere. So: outside production the whole message is printed;
- * in production the body is withheld, the recipient is masked, and the log
- * says loudly that no mail provider is configured.
+ * Whether a message body may be written to the log.
+ *
+ * A body holds a sign-in code, a temporary password or a bank feed link, so
+ * printing one hands a working credential to everyone who can read the log. On
+ * a developer's own machine that is fine and is how the app has always worked
+ * offline. In production the log is shared, retained and shipped elsewhere, so
+ * it is not.
+ *
+ * `MAIL_DEBUG_LOG_BODIES=1` overrides that for a staging environment whose mail
+ * is not configured yet and where a tester could otherwise never get past the
+ * code entry screen. It is a deliberate, named, opt-in hole: everything it
+ * prints is a live credential, so it belongs on staging with throwaway accounts
+ * and never on an environment holding a real firm's books. Treat anything it
+ * logs as disclosed, and clear the flag once mail works.
+ */
+function mayLogBodies(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  return process.env.MAIL_DEBUG_LOG_BODIES?.trim() === "1";
+}
+
+/**
+ * The console transport is what runs when no provider is configured. It only
+ * reports the outcome; the message itself is logged by `record` below, so that
+ * one rule decides what reaches the log no matter which transport ran.
  */
 class ConsoleTransport implements MailTransport {
   readonly name = "console";
-  async send(message: MailMessage): Promise<void> {
-    const line = "-".repeat(64);
-    if (process.env.NODE_ENV === "production") {
-      console.error(
-        `[mail] No mail provider is configured (RESEND_API_KEY / MAIL_FROM). ` +
-          `A message to ${maskEmail(message.to)} ("${message.subject}") was NOT sent and its body is withheld from this log.`,
-      );
-      return;
-    }
-    console.info(`\n${line}\n[mail → ${message.to}] ${message.subject}\n${message.text}\n${line}\n`);
-  }
+  async send(): Promise<void> {}
 }
 
 class ResendTransport implements MailTransport {
@@ -67,15 +79,25 @@ class ResendTransport implements MailTransport {
       body: JSON.stringify({ from: this.from, to: [message.to], subject: message.subject, text: message.text }),
     });
     if (!response.ok) {
-      // The body may describe the failure but never the message; log the status only.
+      // The provider's own diagnosis is the only thing that explains a refusal
+      // ("this sender may only reach the account owner", "domain not verified"),
+      // and discarding it turns a one-line configuration mistake into a day of
+      // guessing. It is Resend's text about the request, never our message body,
+      // so it goes to the log in full; the thrown error stays terse.
+      const detail = await response.text().catch(() => "");
+      console.error(`[mail] Resend refused the message (${response.status}): ${detail || "no detail"}`);
       throw new Error(`Mail provider responded ${response.status}`);
     }
   }
 }
 
+/**
+ * The transport is chosen once. `deliver` is the only way out of this module:
+ * callers get an outcome they must handle, not a promise that throws.
+ */
 let cached: MailTransport | null = null;
 
-export function getMailer(): MailTransport {
+function getMailer(): MailTransport {
   if (cached) return cached;
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.MAIL_FROM?.trim();
@@ -83,7 +105,63 @@ export function getMailer(): MailTransport {
   return cached;
 }
 
-/** True when messages only reach the log, so the UI can say so. */
-export function mailIsConsoleOnly(): boolean {
-  return getMailer().name === "console";
+const RULE = "-".repeat(64);
+
+/** What the log calls each outcome, so a tester can scan for the right block. */
+const HEADLINE: Record<MailOutcome, string> = {
+  sent: "mail sent",
+  logged: "mail NOT SENT (no provider configured)",
+  failed: "mail NOT SENT (the provider refused it)",
+};
+
+/**
+ * Write one message to the log.
+ *
+ * Every message, not only the ones that failed to arrive: while mail is being
+ * configured, a tester needs the code out of a *successful* send just as much,
+ * and hunting for which emails happen to be logged is its own waste of time.
+ * What varies is not which messages are printed but whether their bodies may
+ * be — `mayLogBodies` owns that single decision, and when it says no the log
+ * still records that a message went to a masked address, so the flow is
+ * traceable without the credential.
+ */
+function record(outcome: MailOutcome, message: MailMessage): void {
+  if (!mayLogBodies()) {
+    // A delivered message needs no notice: it arrived, and naming recipients in
+    // a production log is gratuitous. The two that did not arrive do.
+    if (outcome === "sent") return;
+    console.error(
+      `[mail] ${HEADLINE[outcome]} — to ${maskEmail(message.to)} ("${message.subject}"). ` +
+        `Its body is withheld from this log. Set MAIL_DEBUG_LOG_BODIES=1 to print it; it is a live credential.`,
+    );
+    return;
+  }
+
+  const warning =
+    outcome === "sent" ? "" : `\n\nThis message did NOT arrive. Everything needed to continue by hand is above.`;
+  const log = outcome === "sent" ? console.info : console.warn;
+  log(
+    `\n${RULE}\n[${HEADLINE[outcome]} → ${message.to}]\n${message.subject}\n\n${message.text}${warning}\n${RULE}\n`,
+  );
+}
+
+/**
+ * Send a message, log it, and report the outcome. **Never throws** — a refused
+ * email is a fact to hand back, not a crash. Callers that have already
+ * committed a row (an invited colleague, a feed request) carry on and offer the
+ * credential or the link directly; callers that have not (a sign-in code)
+ * return a form error and let the person retry.
+ */
+export async function deliver(message: MailMessage): Promise<MailOutcome> {
+  const mailer = getMailer();
+  let outcome: MailOutcome;
+  try {
+    await mailer.send(message);
+    outcome = mailer.name === "console" ? "logged" : "sent";
+  } catch {
+    // The transport has already logged the provider's own explanation.
+    outcome = "failed";
+  }
+  record(outcome, message);
+  return outcome;
 }

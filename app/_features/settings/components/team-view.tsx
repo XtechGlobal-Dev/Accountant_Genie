@@ -8,6 +8,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { changeRole, inviteUser, setTaxAgentStatus } from "@/server/modules/auth/actions";
+import type { MailOutcome } from "@/shared/contracts/result";
 import type { TeamMember } from "@/shared/contracts/settings";
 import type { UserRole } from "@/shared/enums";
 import { shortDate } from "@/shared/format";
@@ -235,7 +236,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [field, setField] = useState<string | null>(null);
-  const [temp, setTemp] = useState<string | null | undefined>(undefined);
+  const [added, setAdded] = useState<{ temporaryPassword: string | null; mail: MailOutcome } | null>(null);
 
   function submit(formData: FormData) {
     setError(null);
@@ -243,7 +244,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
     startTransition(async () => {
       const result = await inviteUser(formData);
       if (result.ok) {
-        setTemp(result.temporaryPassword);
+        setAdded({ temporaryPassword: result.temporaryPassword, mail: result.mail });
         router.refresh();
       } else {
         setError(result.error);
@@ -255,18 +256,24 @@ function InviteModal({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal open onClose={onClose} title="Add team member" description="They receive a temporary password and must change it on first sign-in.">
-      {temp !== undefined ? (
+      {added ? (
         <>
           <div className="flex flex-col gap-3 px-5 py-5">
-            <Alert tone="positive" title="Team member added">
+            <Alert
+              tone={added.mail === "sent" ? "positive" : "warning"}
+              title={added.mail === "sent" ? "Team member added" : "Team member added, but not emailed"}
+            >
               They must change their password the first time they sign in.
             </Alert>
-            {temp ? (
+            {added.temporaryPassword ? (
               <div className="rounded-2xl border border-rule bg-surface-2 p-4">
                 <p className="text-xs text-ink-3">
-                  No email provider is configured, so hand this temporary password over yourself. It is shown once and not stored.
+                  {added.mail === "logged"
+                    ? "No email provider is configured, so hand this temporary password over yourself."
+                    : "The email was refused, so they have not received it. Hand this temporary password over yourself, or fix the mail settings and add them again."}{" "}
+                  It is shown once and not stored.
                 </p>
-                <p className="code mt-2 select-all text-base">{temp}</p>
+                <p className="code mt-2 select-all text-base">{added.temporaryPassword}</p>
               </div>
             ) : (
               <p className="text-sm text-ink-2">Their temporary password has been emailed to them.</p>

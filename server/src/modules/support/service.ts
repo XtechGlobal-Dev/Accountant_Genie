@@ -2,7 +2,7 @@ import "server-only";
 
 import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
-import { getMailer, mailIsConsoleOnly } from "@/server/core/mail";
+import { deliver } from "@/server/core/mail";
 import { consume } from "@/server/core/rate-limit";
 import * as firms from "@/server/modules/firms/repository";
 import type { ActionResult } from "@/shared/contracts/result";
@@ -36,7 +36,7 @@ export async function sendSupportRequest(
   const inbox = process.env.SUPPORT_EMAIL?.trim() || "support@accountantgenie.local";
   const label = SUPPORT_CATEGORY_LABELS[input.category];
 
-  await getMailer().send({
+  const outcome = await deliver({
     to: inbox,
     subject: `[${label}] ${input.subject}`,
     text:
@@ -47,6 +47,13 @@ export async function sendSupportRequest(
       (input.page ? `Page: ${input.page}\n` : "") +
       `Category: ${label}\n`,
   });
+
+  // Nothing else keeps this message — there is no support ticket table — so a
+  // refused email loses it entirely. Say so and let them send it again rather
+  // than report success over a message that went nowhere.
+  if (outcome === "failed") {
+    return { ok: false, error: "We could not send your message just now. Please try again in a moment." };
+  }
 
   // The fact of the request, not its text: "who asked for help, about what
   // area, when" is worth having when a firm later disputes what was said.
@@ -61,5 +68,5 @@ export async function sendSupportRequest(
     });
   });
 
-  return { ok: true, id: "sent", consoleOnly: mailIsConsoleOnly() };
+  return { ok: true, id: "sent", consoleOnly: outcome === "logged" };
 }

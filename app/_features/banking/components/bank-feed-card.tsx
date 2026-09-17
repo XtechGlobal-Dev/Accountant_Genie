@@ -36,6 +36,7 @@ import type {
   FeedRequestRow,
   FeedSyncRunRow,
 } from "@/shared/contracts/bank-account";
+import type { MailOutcome } from "@/shared/contracts/result";
 import { shortDate } from "@/shared/format";
 import { Icon } from "@/ui/icons";
 import { Alert, Badge, Button, Card, CardHeader, Field, Modal, ModalFooter, Select, submitWith } from "@/ui/primitives";
@@ -483,14 +484,14 @@ export function FeedRequestModal({ clientId, onClose }: { clientId: string; onCl
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState<string | null>(null);
+  const [sent, setSent] = useState<{ previewUrl: string | null; mail: MailOutcome } | null>(null);
 
   function submit(formData: FormData) {
     setError(null);
     startTransition(async () => {
       const result = await requestBankFeed(clientId, formData);
       if (result.ok) {
-        setSent(result.previewUrl);
+        setSent({ previewUrl: result.previewUrl, mail: result.mail });
         router.refresh();
       } else {
         setError(result.error);
@@ -510,13 +511,15 @@ export function FeedRequestModal({ clientId, onClose }: { clientId: string; onCl
       {sent !== null ? (
         <>
           <div className="flex flex-col gap-3 px-5 py-5 sm:px-6">
-            <Alert tone="positive" title="Request sent">
+            <Alert tone={sent.mail === "sent" ? "positive" : "warning"} title={sent.mail === "sent" ? "Request sent" : "Request created, but not emailed"}>
               The client has 14 days to respond. Its status shows on this page.
             </Alert>
-            {sent ? (
+            {sent.previewUrl ? (
               <p className="text-xs leading-relaxed text-ink-3">
-                No email provider is configured in this environment, so the link was written to the
-                server log instead. Preview path: <span className="code">{sent}</span>
+                {sent.mail === "logged"
+                  ? "No email provider is configured in this environment, so the link was written to the server log instead."
+                  : "The email was refused, so the client has not received the link. Pass it on yourself, or fix the mail settings and request the feed again."}{" "}
+                Link: <span className="code">{sent.previewUrl}</span>
               </p>
             ) : null}
           </div>
