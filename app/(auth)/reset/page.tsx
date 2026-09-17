@@ -3,6 +3,7 @@ import Link from "next/link";
 import { resetPassword } from "@/server/modules/auth/actions";
 import { AuthForm } from "@/features/auth/components/auth-form";
 import { ResendButton } from "@/features/auth/components/resend-button";
+import { EchoedCode } from "@/features/auth/components/echoed-code";
 import { Alert, Field, PasswordField } from "@/ui/primitives";
 
 export const metadata: Metadata = { title: "Choose a new password" };
@@ -24,6 +25,7 @@ export default async function ResetPage({
           </Alert>
         </div>
       ) : null}
+      <EchoedCode />
       <div className="mt-6">
         <AuthForm action={resetPassword} submitLabel="Set password" pendingLabel="Saving…">
           <Field label="Verification code" name="code" required inputMode="numeric" autoComplete="one-time-code" placeholder="000000" />

@@ -4,7 +4,7 @@ import { createHash, randomInt } from "node:crypto";
 import { cookies } from "next/headers";
 import { db, type DbClient } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
-import { deliver, type MailOutcome } from "@/server/core/mail";
+import { deliver, mayEchoCodeToBrowser, type MailOutcome } from "@/server/core/mail";
 import { hashPassword, temporaryPassword, verifyPassword } from "@/server/core/password";
 import { createSession, destroyAllSessions, destroySession } from "@/server/core/session";
 import {
@@ -114,6 +114,10 @@ async function issueCode(userId: string, email: string, purpose: OtpPurpose): Pr
     text: `Your code is ${code}. It expires in ${OTP_MINUTES} minutes.\n\nIf you did not request this, ignore this message.`,
   });
 
+  if (outcome === "logged" && mayEchoCodeToBrowser()) {
+    await setEchoCode(code);
+  }
+
   if (outcome === "failed") {
     // Best effort: if the delete also fails the code still expires on its own.
     await db.otpCode.delete({ where: { id: row.id } }).catch(() => {});
@@ -121,6 +125,39 @@ async function issueCode(userId: string, email: string, purpose: OtpPurpose): Pr
   }
 
   return { ok: true, otpId: row.id, outcome };
+}
+
+/**
+ * Carries the plaintext code to the page that is about to ask for it, and
+ * only while `mayEchoCodeToBrowser()` says so.
+ *
+ * Deliberately NOT httpOnly — the whole point is that a person can read it
+ * out of their own browser. It is scoped to this flow and dies with it:
+ * same ten minutes as the code, and cleared the moment the code is redeemed
+ * or the flow is abandoned.
+ */
+const ECHO_COOKIE = "ledgerly_debug_code";
+
+async function setEchoCode(code: string): Promise<void> {
+  const jar = await cookies();
+  jar.set(ECHO_COOKIE, code, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: OTP_MINUTES * 60,
+  });
+}
+
+/**
+ * The code this browser was just issued, for the code screen to show.
+ * Null whenever the echo is off, which is the normal case.
+ */
+export async function peekEchoedCode(): Promise<string | null> {
+  if (!mayEchoCodeToBrowser()) return null;
+  const jar = await cookies();
+  const code = jar.get(ECHO_COOKIE)?.value;
+  return code && /^\d{6}$/.test(code) ? code : null;
 }
 
 async function setPending(otpId: string): Promise<void> {
@@ -142,6 +179,7 @@ async function readPending(): Promise<string | null> {
 async function clearPending(): Promise<void> {
   const jar = await cookies();
   jar.delete(PENDING_COOKIE);
+  jar.delete(ECHO_COOKIE);
 }
 
 /**

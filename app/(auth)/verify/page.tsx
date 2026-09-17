@@ -4,6 +4,7 @@ import { verifyCode } from "@/server/modules/auth/actions";
 import { AuthForm } from "@/features/auth/components/auth-form";
 import { OtpInput } from "@/features/auth/components/otp-input";
 import { ResendButton } from "@/features/auth/components/resend-button";
+import { EchoedCode } from "@/features/auth/components/echoed-code";
 import { Alert } from "@/ui/primitives";
 
 export const metadata: Metadata = { title: "Verify code" };
@@ -25,6 +26,7 @@ export default async function VerifyPage({
           </Alert>
         </div>
       ) : null}
+      <EchoedCode />
       <div className="mt-8">
         <AuthForm action={verifyCode} submitLabel="Verify Code" pendingLabel="Verifying…">
           <OtpInput />

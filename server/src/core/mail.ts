@@ -54,6 +54,31 @@ function mayLogBodies(): boolean {
   if (process.env.NODE_ENV !== "production") return true;
   return process.env.MAIL_DEBUG_LOG_BODIES?.trim() === "1";
 }
+/**
+ * Whether a one-time code may be handed to the browser that asked for it.
+ *
+ * Sibling of `MAIL_DEBUG_LOG_BODIES`, and the same bargain with a wider
+ * blast radius: that one puts a live credential in the server log, where
+ * only an operator sees it. This one puts it in the visitor's own page, so
+ * anyone who reaches the code screen can read their code out of DevTools
+ * without ever receiving the email.
+ *
+ * It exists because a deployed environment with no mail provider is a
+ * locked door for everyone, including the people testing it. It is not a
+ * fallback and it is not clever: it turns the second factor back into the
+ * first, so the account is worth exactly its password while this is on.
+ *
+ * Two conditions, and both have to hold:
+ *   1. `MAIL_DEBUG_ECHO_CODE=1` — named, deliberate, never a default.
+ *   2. The message was only logged, not sent. The moment a provider is
+ *      configured this stops on its own, which is the point: the hole
+ *      closes when the reason for it goes away, not when someone remembers.
+ *
+ * Never set on an environment holding a real firm's books.
+ */
+export function mayEchoCodeToBrowser(): boolean {
+  return process.env.MAIL_DEBUG_ECHO_CODE?.trim() === "1";
+}
 
 /**
  * The console transport is what runs when no provider is configured. It only
