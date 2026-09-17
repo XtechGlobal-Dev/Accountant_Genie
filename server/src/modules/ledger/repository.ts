@@ -48,6 +48,7 @@ export function listEntries(firmId: string, clientId: string, take = 500) {
       reversedBy: { select: { id: true } },
       postedBy: { select: { name: true } },
       _count: { select: { lines: true } },
+      lines: { orderBy: { id: "asc" }, select: LINE_SELECT },
     },
   });
 }

@@ -9,7 +9,7 @@ import { GST_RULES_VERSION } from "@/server/modules/tax-rules/catalogue";
 import * as clients from "@/server/modules/clients/repository";
 import * as subcontractors from "@/server/modules/subcontractors/repository";
 import type { ActionResult } from "@/shared/contracts/result";
-import type { JournalEntryDetail, JournalEntryRow } from "@/shared/contracts/journal";
+import type { JournalEntryDetail, JournalEntryRow, JournalLineView } from "@/shared/contracts/journal";
 import * as repo from "./repository";
 import type { JournalInputParsed, ReverseJournalParsed } from "./schema";
 import { checkJournalShape, journalTotals } from "./validate";
@@ -46,6 +46,7 @@ export async function listJournals(
     source: row.source,
     totalCents: row.totalCents,
     lineCount: row._count.lines,
+    lines: row.lines.map(toLineView),
     isReversal: row.reversesId !== null,
     reversedById: row.reversedBy?.id ?? null,
     postedBy: row.postedBy?.name ?? null,
@@ -72,17 +73,30 @@ export async function getJournal(
     createdAt: row.createdAt,
     reverses: row.reverses,
     reversedBy: row.reversedBy,
-    lines: row.lines.map((line) => ({
-      id: line.id,
-      accountId: line.accountId,
-      accountCode: line.account.code,
-      accountName: line.account.name,
-      description: line.description,
-      debitCents: line.debitCents,
-      creditCents: line.creditCents,
-      gstCents: line.gstCents,
-      gstTreatment: line.gstTreatment,
-    })),
+    lines: row.lines.map(toLineView),
+  };
+}
+
+function toLineView(line: {
+  id: string;
+  accountId: string;
+  description: string | null;
+  debitCents: number;
+  creditCents: number;
+  gstCents: number;
+  gstTreatment: GstTreatment | null;
+  account: { code: number; name: string };
+}): JournalLineView {
+  return {
+    id: line.id,
+    accountId: line.accountId,
+    accountCode: line.account.code,
+    accountName: line.account.name,
+    description: line.description,
+    debitCents: line.debitCents,
+    creditCents: line.creditCents,
+    gstCents: line.gstCents,
+    gstTreatment: line.gstTreatment,
   };
 }
 
