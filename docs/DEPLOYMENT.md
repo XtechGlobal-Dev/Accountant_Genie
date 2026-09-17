@@ -1,24 +1,25 @@
-# Deployment — Vercel · Render · Neon
+# Deployment — Render · Neon
 
-Accountant Genie runs as three pieces. The split is not arbitrary: it follows from the fact
-that an accounting mutation must not be interrupted halfway.
+Accountant Genie runs as three pieces on Render over one Neon database. The split is not
+arbitrary: it follows from the fact that an accounting mutation must not be interrupted halfway.
 
 ```
   Browser
      │
      ▼
   ┌──────────────────┐   enqueues job id    ┌──────────────────┐
-  │  VERCEL          │ ───────────────────► │  RENDER          │
-  │  Next.js app     │      Redis (BullMQ)  │  Key Value       │
-  │  · pages, forms  │                      └────────┬─────────┘
+  │  RENDER          │ ───────────────────► │  RENDER          │
+  │  Web service     │   Redis (BullMQ)     │  Key Value       │
+  │  · pages, forms  │   private network    └────────┬─────────┘
   │  · server actions│                               │ dequeues
   │  · webhooks      │                      ┌────────▼─────────┐
   │  · SSE progress  │                      │  RENDER          │
-  └────────┬─────────┘                      │  Background      │
-           │                                │  worker          │
-           │         ┌──────────────┐       │  · imports       │
-           └────────►│  NEON        │◄──────┤  · reconcile     │
-                     │  Postgres    │       │  · feed sync     │
+  │  · owns migrations                      │  Background      │
+  └────────┬─────────┘                      │  worker          │
+           │                                │  · imports       │
+           │         ┌──────────────┐       │  · reconcile     │
+           └────────►│  NEON        │◄──────┤  · feed sync     │
+                     │  Postgres    │       │                  │
                      └──────────────┘       └────────┬─────────┘
                                                      │
                      ┌──────────────┐                │
@@ -27,14 +28,29 @@ that an accounting mutation must not be interrupted halfway.
                      └──────────────┘
 ```
 
-**Why the worker is a separate host.** A Vercel function ends when its response does. The
-in-process job runner in `server/src/jobs/queue.ts` would be killed mid-import — half a
-statement posted, half not. Setting `REDIS_URL` flips that module from running jobs inline to
-enqueueing them, and the Render worker runs them in a process that outlives the request.
+All three are declared in [`render.yaml`](../render.yaml) and deploy from one Blueprint.
 
-**The one invariant to get right:** `REDIS_URL`, `DATABASE_URL`, `AUTH_SECRET` and the `S3_*`
-variables must be *identical* on Vercel and on Render. A mismatch does not error — the app
-enqueues into a queue nobody reads, or writes a file the worker cannot find.
+**Why the worker is a separate service.** The in-process job runner in
+`server/src/jobs/queue.ts` runs a job inside the request that started it, so a deploy, a timeout
+or a dropped connection kills it mid-import — half a statement posted, half not. Setting
+`REDIS_URL` flips that module from running jobs inline to enqueueing them, and the worker runs
+them in a process that outlives the request.
+
+**Why the app is on Render and not Vercel.** It was on Vercel, and that works, but a Vercel
+function is capped at 300s on Pro and `/api/jobs/[id]/events` streams progress for up to 15
+minutes — so the Activity Panel's stream was cut and replayed on every long import. Keeping both
+halves on Render also puts the queue on the private network: `ipAllowList` is empty, and the
+Redis connection string is never exposed to the internet. See §7 for what this costs.
+
+**The one invariant to get right:** `AUTH_SECRET`, `DATABASE_URL` and the `S3_*` variables must
+be *identical* on the web service and the worker. A mismatch does not error — the app writes a
+file the worker cannot find, or issues a one-time code the worker's pepper rejects. `REDIS_URL`
+cannot drift, because both services read it from the same `fromService` block.
+
+**Migrations belong to the web service only.** Render deploys blueprint services in parallel, so
+exactly one of them can own `db:deploy && db:sync-accounts` — two concurrent `db:sync-accounts`
+runs race each other over the same rows. The app owns it because a user-facing 500 from a column
+that does not exist yet is worse than a job that fails and is retried with backoff.
 
 ---
 
@@ -43,19 +59,20 @@ enqueues into a queue nobody reads, or writes a file the worker cannot find.
 | You need | Notes |
 |---|---|
 | A Neon project | Free tier is enough to start. Region `ap-southeast-2` (Sydney). |
-| A Render account | The worker needs the **Starter** plan — pre-deploy commands are not on Free. |
-| A Vercel account | Hobby works; **Pro is strongly recommended** — see *SSE and function duration* below. |
+| A Render account | Both services need the **Starter** plan — pre-deploy commands are not on Free, and a Free web service sleeps. |
+| A domain | Pointed at the web service by CNAME. TLS is issued by Render. |
 | An AWS account | One S3 bucket and one IAM user. |
 | An Anthropic API key | Optional. Without it the rules + memory tiers still run and the rest goes to review. |
 
-The repository must be on GitHub and reachable by both Vercel and Render.
+The repository must be on GitHub and reachable by Render.
 
 ---
 
 ## 1. Neon
 
-1. Create a project, region **AWS ap-southeast-2 (Sydney)** — the same region as the Vercel
-   functions below, so queries do not cross the Pacific twice per page.
+1. Create a project, region **AWS ap-southeast-2 (Sydney)**. Put the Render services in the
+   region closest to it, so a page doing several sequential queries does not pay the round
+   trip each time — see *Region skew* in §7.
 2. Create a database named `ledgerly`.
 3. From **Connection Details**, copy **both** strings. They are different and both are needed:
 
@@ -78,7 +95,8 @@ The repository must be on GitHub and reachable by both Vercel and Render.
 
 Uploaded statements are source documents — the bottom of the lineage chain every report figure
 traces back through — and they are retained for audit. They cannot live on either host's
-filesystem: Vercel's is read-only, and Render's is wiped on each deploy.
+filesystem: Render's is wiped on each deploy, and the app and the worker are separate
+processes that both need the same file anyway.
 
 `getStorage()` now **throws on boot** if `S3_BUCKET` is unset while `NODE_ENV=production`,
 rather than writing files that quietly vanish.
@@ -105,26 +123,36 @@ rather than writing files that quietly vanish.
 
 ---
 
-## 3. Render — worker and Redis
+## 3. Render — the Blueprint
 
-`render.yaml` in the repository root declares both services.
+[`render.yaml`](../render.yaml) in the repository root declares all three services:
+`accountant-genie-app` (web), `accountant-genie-worker` and `accountant-genie-redis`.
 
 1. Render Dashboard → **Blueprints** → **New Blueprint Instance** → pick this repository.
-2. Render reads `render.yaml` and proposes `accountant-genie-worker` and
-   `accountant-genie-redis`. `REDIS_URL` is wired between them automatically.
-3. Fill in every variable marked `sync: false`:
+2. Render reads `render.yaml` and proposes the three. `REDIS_URL` is wired into both the app
+   and the worker automatically, from the same `fromService` block, so they cannot drift.
+3. Fill in every variable marked `sync: false`. The full list is in the
+   [Appendix](#appendix--environment-variables); the ones with no sensible default are:
 
    `DATABASE_URL` · `DIRECT_DATABASE_URL` · `AUTH_SECRET` · `ANTHROPIC_API_KEY` ·
    `S3_BUCKET` · `S3_ACCESS_KEY_ID` · `S3_SECRET_ACCESS_KEY` ·
    `FISKIL_CLIENT_ID` · `FISKIL_CLIENT_SECRET` · `RESEND_API_KEY` · `MAIL_FROM`
 
-   Generate `AUTH_SECRET` once and reuse the same value on Vercel:
+   Generate `AUTH_SECRET` once and paste the **same** value into both services:
 
    ```
    node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
    ```
 
-4. Apply. On each deploy the worker's pre-deploy step runs:
+   The web service additionally takes `SUPPORT_EMAIL`, `GOOGLE_CLIENT_*`, `STRIPE_*` and
+   `FISKIL_WEBHOOK_SECRET` — it is the half that serves forms and receives webhooks.
+
+   Do **not** set `DEMO_PASSWORD`. There is no demo firm in production.
+
+   There are no `NEXT_PUBLIC_*` variables in this codebase, by design — nothing is inlined into
+   the client bundle, so rotating any secret is a redeploy rather than a frontend rebuild.
+
+4. Apply. On each deploy the **web service's** pre-deploy step runs:
 
    ```
    npm run db:deploy         # prisma migrate deploy — every migration, in order
@@ -134,48 +162,43 @@ rather than writing files that quietly vanish.
    This is **not** `npm run db:seed`. Seeding creates the "Meridian Accounting" demo firm,
    which a database with real clients must never get.
 
-5. Copy the Key Value **external** connection string from the Render dashboard — Vercel needs
-   it in the next step, and Vercel cannot reach Render's private network.
+   The worker has no pre-deploy step, deliberately — see *Migrations belong to the web service
+   only* at the top of this document.
 
-**Deploy Render before Vercel.** The schema is migrated by the worker's pre-deploy, so this
-order means the app never starts against a database that is behind it.
+5. Add your domain: web service → **Settings → Custom Domains** → add it, then point the CNAME
+   at the target Render shows you. TLS is issued automatically once DNS resolves.
+
+**Both services need the Starter plan.** Pre-deploy commands are not available on Free, and a
+Free web service sleeps — which for the worker means jobs simply stop running.
 
 ---
 
-## 4. Vercel — the app
+## 4. Migrating off Vercel
 
-1. Vercel → **Add New → Project** → import the repository.
-2. Framework preset **Next.js**. Root directory **`./`** — the repository root *is* the
-   frontend package, and `server/` is an npm workspace installed by the same `npm ci`.
-3. Leave the build settings alone; `vercel.json` sets them:
-   - build `npm run build`, which runs `prisma generate` and then `next build`
-   - region `syd1`
+Skip this if you are deploying fresh.
 
-   `maxDuration` for the SSE progress route is declared in the route file itself
-   (`app/api/jobs/[id]/events/route.ts`), which is the supported way for the App Router
-   and keeps the setting next to the code it governs.
-4. Add the environment variables, to **Production and Preview**:
+The app ran on Vercel until the SSE cap and the split environment made it not worth it. To move
+an existing deployment:
 
-   | Variable | Value |
-   |---|---|
-   | `DATABASE_URL` | Neon **pooled** |
-   | `DIRECT_DATABASE_URL` | Neon **direct** |
-   | `REDIS_URL` | Render Key Value **external** string |
-   | `AUTH_SECRET` | byte-identical to Render |
-   | `S3_BUCKET` `S3_REGION` `S3_ACCESS_KEY_ID` `S3_SECRET_ACCESS_KEY` | as Render |
-   | `ANTHROPIC_API_KEY` | as Render |
-   | `RESEND_API_KEY` `MAIL_FROM` `SUPPORT_EMAIL` | email |
-   | `STRIPE_SECRET_KEY` `STRIPE_WEBHOOK_SECRET` `STRIPE_PRICE_*` | billing |
-   | `FISKIL_CLIENT_ID` `FISKIL_CLIENT_SECRET` `FISKIL_WEBHOOK_SECRET` `FISKIL_BASE_URL` `FISKIL_API_VERSION` | bank feeds |
-   | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` | Google sign-in |
-   | `RECONCILE_*` | thresholds — see `server/.env.example` |
+1. Bring the Render web service up first and verify it on its own `.onrender.com` URL —
+   §6 below is the check list. Leave Vercel serving the domain while you do.
+2. While both are live, the queue must stay publicly reachable: add `- source: 0.0.0.0/0` back
+   to `ipAllowList` in `render.yaml` temporarily, because Vercel's egress has no fixed range
+   and cannot use Render's private network.
+3. Move the domain: remove it from the Vercel project **first** (a domain cannot be verified on
+   two platforms at once), then add it on Render and update the CNAME.
+4. Once DNS has propagated and the Render service is serving the domain, delete the Vercel
+   project and restore `ipAllowList: []`. Redeploy so the queue goes private again.
 
-   Do **not** set `DEMO_PASSWORD` in production. There is no demo firm there.
+`vercel.json` is kept in the repository so the Vercel path still works if you ever want it back.
+It is inert on Render.
 
-   There are no `NEXT_PUBLIC_*` variables in this codebase, by design — nothing is inlined into
-   the client bundle, so rotating any secret is a redeploy rather than a frontend rebuild.
-
-5. Deploy.
+**One thing that caused a day of confusion and is worth knowing:** Vercel scopes each
+environment variable to Production, Preview and/or Development separately, and creating a
+**Production** variable needs a team role that a plain member does not have. A project whose
+variables are all Preview-scoped builds and serves fine, and then returns 500 on every request
+that touches the database, because `DATABASE_URL` is simply absent at runtime. Render has no
+such split: a service's environment is its environment.
 
 ---
 
@@ -197,13 +220,14 @@ minimum to `consent.received`, `consent.revoked`,
 Without `FISKIL_WEBHOOK_SECRET` the endpoint answers **503** rather than trusting an
 unauthenticated payload. That is deliberate, not a fault.
 
-Redeploy Vercel after adding the two webhook secrets.
+Redeploy the web service after adding the two webhook secrets.
 
 ---
 
 ## 6. Verify
 
-Each step proves one of the three pieces. Do them in order.
+Each step proves one of the three pieces. Do them in order, against the `.onrender.com` URL
+before you move the domain.
 
 ```
 # From a local checkout, pointed at the production Neon URLs:
@@ -217,19 +241,22 @@ Then in the browser:
 2. **Create a client** → proves the session and tenancy.
 3. **Upload a CSV statement** (there is one in `server/samples/`) → proves S3 *and* the queue.
    The Activity Panel must show stage events moving.
-4. **Render logs** should show `[worker] listening`, then `[worker] done <id>`.
+4. **Worker logs** should show `[worker] listening`, then `[worker] done <id>`.
 5. **Open the Trial Balance** → proves the ledger reads, and that it sums to zero.
 
 ### What "broken" looks like
 
 | Symptom | Cause |
 |---|---|
-| Upload succeeds, progress bar never moves | `REDIS_URL` differs between Vercel and Render |
-| Worker exits immediately | `REDIS_URL` not set on Render — the worker refuses to run pointlessly |
+| Upload succeeds, progress bar never moves | The worker is down, or the two services are in different regions and the private address does not resolve |
+| Worker exits immediately | `REDIS_URL` not set — the worker refuses to run pointlessly |
+| 500 on every request, pages themselves render | A required variable is missing on the web service. Prerendered pages are served from cache; the first query throws. Check the Logs tab for the thrown message |
 | Boot error naming `S3_BUCKET` | Storage not configured. By design, not a regression |
-| `Cannot find module 'tsx'` on Render | The build command lost `--include=dev`; Render sets `NODE_ENV=production` |
+| `Cannot find module 'tsx'` or `next: not found` | The build command lost `--include=dev`; Render sets `NODE_ENV=production`, which drops devDependencies |
+| Schema is behind the app after a deploy | The pre-deploy step is missing from the **web** service, or was left on the worker as well |
 | Migration hangs or fails oddly | `DIRECT_DATABASE_URL` is pointed at the **pooled** host |
 | Stripe plan changes never apply | Webhook secret missing — the webhook is the only thing that changes a plan |
+| Sign-up works, the code never arrives | `RESEND_API_KEY`/`MAIL_FROM` unset. The console transport does not throw; in production it withholds the body and logs only that nothing was sent |
 
 ---
 
@@ -237,21 +264,31 @@ Then in the browser:
 
 Real, and worth knowing before the first client is on it.
 
-**SSE and function duration.** `/api/jobs/[id]/events` streams for up to 15 minutes. Vercel caps
-a function at 300s on Pro, 60s on Hobby (300s with Fluid Compute). A long import's stream is cut
-at the cap. The browser reconnects on its own and the route replays from the persisted
-`JobEvent` rows, so no progress is *lost* — but the replay restarts from the beginning, so the
-Activity Panel can show duplicated stage lines on a long job. The proper fix is honouring
-`Last-Event-ID` in that route. On Hobby this is bad enough to notice; use Pro.
+**No CDN in front of the app.** A Render web service is one origin in one region. Static assets
+are served by Next from that instance rather than from an edge cache, so first paint from far
+away is slower than it was on Vercel. For a keyboard-driven tool used by a firm in one country
+this is a fair trade; put Cloudflare in front if it ever stops being one.
 
-**Reports and exports still run inside the request.** A large General Ledger or EOFY export can
-exceed the function cap. This is already on the open list in `CLAUDE.md §9`; moving them onto the
-job queue is the fix, and the queue now exists in production to move them to.
+**Region skew.** The Render services are in `singapore` and Neon is in `ap-southeast-2`
+(Sydney) — roughly 90ms added to every query round trip, and a page doing several sequential
+queries feels it. Moving Neon to Singapore, or the services to Render's Sydney region, removes
+it. Pick one and make them match.
 
-**Redis is reachable from the public internet.** Vercel's egress has no fixed IP range, so the
-Key Value service cannot be IP-restricted to it. The connection string is the only credential —
-rotate it if it is ever exposed. Moving the app to a Render Web Service would let the queue go
-private.
+**`Last-Event-ID` is still not honoured.** `/api/jobs/[id]/events` replays from the persisted
+`JobEvent` rows on reconnect, starting from the beginning, so a dropped stream can show
+duplicated stage lines in the Activity Panel. No progress is *lost*. This mattered more on
+Vercel, where the function cap forced a reconnect on every long import; on Render the stream is
+not cut, so it now only shows up on a genuinely dropped connection.
+
+**Reports and exports still run inside the request.** A large General Ledger or EOFY export
+holds a request open for as long as it takes. There is no hard function cap here to truncate it,
+which makes this less acute than it was on Vercel, but it still ties up a worker thread on a
+single instance. This is on the open list in `CLAUDE.md §9`; moving them onto the job queue is
+the fix, and the queue exists in production to move them to.
+
+**One web instance.** Starter is a single instance, so a deploy is a brief interruption and
+there is no horizontal headroom. Render's autoscaling is the answer when it is needed; the app
+is stateless apart from the session cookie, so nothing in the code prevents it.
 
 **Neon cold starts.** The free tier suspends a compute after inactivity and the first request
 then waits several seconds. Turn off scale-to-zero before anyone relies on it.
@@ -266,124 +303,17 @@ then waits several seconds. Turn off scale-to-zero before anyone relies on it.
 ```
 # Schema change: commit the migration and push. Render's pre-deploy applies it.
 npx prisma migrate dev --name <name>     # local — creates the migration
-git push                                 # Render migrates, then Vercel builds
+git push                                 # Render builds, pre-deploy migrates, then serves
 
 # Chart of accounts change (server/src/au/coa.ts): the same push. Idempotent.
 
 # Check production migration state without deploying:
 npm run db:status
 
-# Rotate AUTH_SECRET: change it on BOTH hosts in one sitting. It is read in one
-# place only (hashCode, auth/service.ts), so rotating invalidates pending one-time
-# codes. Signed-in sessions and trusted devices are NOT affected: neither reads it.
+# Rotate AUTH_SECRET: change it on BOTH hosts in one sitting. Every pending
+# one-time code and every trusted device is invalidated — that is the point.
 ```
 
 **Rollback.** Vercel's instant rollback reverts the app only; it does not revert a migration.
 Write migrations so the previous app version still runs against the new schema — add columns,
 do not rename them — or a rollback takes the app down.
-
----
-
-## Appendix — environment variables
-
-Three groups. **Shared** must be identical on both hosts. **Vercel only** is what the request
-path needs. **Render only** applies if that service is a worker; a Render service running the
-full app needs the Vercel list instead.
-
-### A. Shared — identical on both hosts
-
-```
-DATABASE_URL=postgresql://USER:PASS@ep-xxxx-pooler.REGION.aws.neon.tech/DB?sslmode=verify-full
-DIRECT_DATABASE_URL=postgresql://USER:PASS@ep-xxxx.REGION.aws.neon.tech/DB?sslmode=verify-full
-AUTH_SECRET=<generate once, paste the same value both sides>
-REDIS_URL=<Render Key Value EXTERNAL connection string>
-S3_BUCKET=
-S3_REGION=ap-southeast-2
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
-ANTHROPIC_API_KEY=
-```
-
-```
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
-
-`DATABASE_URL` is the **pooled** host (contains `-pooler`); `DIRECT_DATABASE_URL` is the
-**direct** one. Swapping them makes migrations hang rather than fail cleanly.
-
-### B. Whichever host serves HTTP
-
-```
-MAIL_FROM=Accountant Genie <no-reply@yourdomain.com>
-RESEND_API_KEY=
-SUPPORT_EMAIL=
-
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=        # only exists after registering the endpoint
-STRIPE_PRICE_CORE_MONTHLY=
-STRIPE_PRICE_CORE_YEARLY=
-STRIPE_PRICE_GROWTH_MONTHLY=
-STRIPE_PRICE_GROWTH_YEARLY=
-STRIPE_PRICE_SCALE_MONTHLY=
-STRIPE_PRICE_SCALE_YEARLY=
-
-FISKIL_CLIENT_ID=
-FISKIL_CLIENT_SECRET=
-FISKIL_BASE_URL=https://api.fiskil.com
-FISKIL_API_VERSION=v3
-FISKIL_WEBHOOK_SECRET=        # only exists after registering the endpoint
-```
-
-### C. A worker-only Render service
-
-```
-NODE_VERSION=22
-WORKER_CONCURRENCY=2
-RESEND_API_KEY=               # same as the web host
-MAIL_FROM=                    # same as the web host
-FISKIL_CLIENT_ID=             # the feed sync job calls Fiskil
-FISKIL_CLIENT_SECRET=
-FISKIL_BASE_URL=https://api.fiskil.com
-FISKIL_API_VERSION=v3
-```
-
-A worker needs no `STRIPE_*`, no `GOOGLE_*` and no `FISKIL_WEBHOOK_SECRET`: no job calls
-Stripe, completes an OAuth exchange, or verifies an inbound webhook. It needs `AUTH_SECRET`
-only if it serves auth routes, which a worker does not — but keeping the value identical
-everywhere costs nothing and removes a class of confusion.
-
-### D. Reconciliation thresholds — both hosts, defaults shown
-
-```
-RECONCILE_BATCH_SIZE=40
-RECONCILE_CONFIDENCE_FLOOR=0.75
-RECONCILE_AUTO_CONFIDENCE=0.95
-RECONCILE_HIGH_RISK_CENTS=500000
-RECONCILE_NOVELTY_RISK_CENTS=50000
-RECONCILE_PRE_AI_TARGET=0.6
-```
-
-### Never set in production
-
-```
-DEMO_PASSWORD   # only feeds the seed, and the seed must not run in production
-OPENAI_*        # selects an alternative provider; leave unset
-```
-
-### What happens if you omit one
-
-| Omitted | Consequence |
-|---|---|
-| `DATABASE_URL` | Build still succeeds; the **first request** fails. Not silent. |
-| `DIRECT_DATABASE_URL` | Migrations fall back to the pooled URL and may hang |
-| `AUTH_SECRET` | Sign-up 500s in production — and the firm row is **already committed** when it throws, which is how you tell this apart from a schema problem |
-| `REDIS_URL` | Jobs run in-process. On Vercel they are killed mid-write; on Render they are safe |
-| `S3_*` | First upload throws, naming `S3_BUCKET` |
-| `ANTHROPIC_API_KEY` | Rules + memory tiers still run; the rest routes to human review |
-| `STRIPE_WEBHOOK_SECRET` | Plan changes never apply — the webhook is the only thing that sets a plan |
-| `FISKIL_WEBHOOK_SECRET` | `/api/webhooks/fiskil` answers 503 rather than trusting an unsigned payload |
-| `GOOGLE_*` | Google sign-in hidden; email + code still works |
-| `RESEND_API_KEY` | In production, no email is sent and no body is logged |
