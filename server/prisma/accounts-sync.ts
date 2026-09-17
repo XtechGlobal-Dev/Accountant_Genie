@@ -28,14 +28,39 @@ export interface AccountSyncResult {
   updated: number;
   deleted: number;
   deactivated: number;
+  /**
+   * Accounts left as they were because the chart gives their code a different
+   * type or tax treatment and they have already been posted to. See
+   * `syncSystemAccounts`.
+   */
+  conflicts: number;
 }
 
+/**
+ * A code that has been posted to keeps its meaning.
+ *
+ * The chart is applied by code, so when a chart revision gives an existing
+ * code a different account — 320 was "Subcontractor Payments" and became
+ * "Bank Fees"; 720 was "Motor Vehicles" (GST on capital) and became "GST
+ * Receivable" — an in-place update would quietly move every line ever posted
+ * under the old meaning onto the new one, still carrying the old GST
+ * snapshot. A subcontractor's $2,750 then reports as a bank fee claiming $250
+ * at 1B, and a $40,000 ute brought forward reports as GST Receivable claiming
+ * $3,636 — which is exactly what happened to the demo firm.
+ *
+ * So an account that has been posted to is not changed in type or treatment.
+ * It is left exactly as it is, reported as a conflict, and the caller decides:
+ * in development, purge and reseed; in production, the new account needs a
+ * new code and the old one retires. Renaming or redescribing an account that
+ * keeps its type and treatment is an ordinary edit and goes through.
+ */
 export async function syncSystemAccounts(
   db: Db,
   log: (line: string) => void = () => {},
 ): Promise<AccountSyncResult> {
   let created = 0;
   let updated = 0;
+  let conflicts = 0;
 
   for (const a of AU_CHART_OF_ACCOUNTS) {
     const data = {
@@ -58,10 +83,26 @@ export async function syncSystemAccounts(
     // because local development uses `db push`, which does not apply it.
     const existing = await db.account.findFirst({
       where: { code: a.code, firmId: null, clientId: null },
-      select: { id: true },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        gstTreatment: true,
+        _count: { select: { journalLines: true, bankTransactions: true } },
+      },
     });
 
     if (existing) {
+      const meaningChanged = existing.type !== a.type || existing.gstTreatment !== a.gstTreatment;
+      const inUse = existing._count.journalLines > 0 || existing._count.bankTransactions > 0;
+      if (meaningChanged && inUse) {
+        conflicts++;
+        log(
+          `  ! ${a.code} ${existing.name} (${existing.type}, ${existing.gstTreatment}) has been posted to and was NOT changed ` +
+            `to ${a.name} (${a.type}, ${a.gstTreatment}) — give the new account a new code, or purge and reseed a development database`,
+        );
+        continue;
+      }
       await db.account.update({ where: { id: existing.id }, data });
       updated++;
     } else {
@@ -71,7 +112,7 @@ export async function syncSystemAccounts(
   }
 
   const retired = await retireSystemAccounts(db, log);
-  return { created, updated, ...retired };
+  return { created, updated, conflicts, ...retired };
 }
 
 /**
