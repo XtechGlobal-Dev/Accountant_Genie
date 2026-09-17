@@ -1,6 +1,6 @@
 ---
 name: ai-classification
-description: Contract for calling Codex in this codebase — structured output, the validation gate, lineage, batching, prompt caching, PII minimisation and cost control. Load BEFORE writing or reviewing any code that calls the Anthropic API, builds a prompt, defines an AI output schema, or consumes an AI result. Triggers on Codex, Anthropic, LLM, AI, prompt, classification, structured output, model, provider.
+description: Contract for calling Claude in this codebase — structured output, the validation gate, lineage, batching, prompt caching, PII minimisation and cost control. Load BEFORE writing or reviewing any code that calls the Anthropic API, builds a prompt, defines an AI output schema, or consumes an AI result. Triggers on Claude, Anthropic, LLM, AI, prompt, classification, structured output, model, provider.
 ---
 
 # AI classification
@@ -39,9 +39,9 @@ Two implementations are required, not one:
 - `MockProvider` — deterministic, free, offline. This is what makes the test suite runnable in CI and
   lets the whole pipeline be developed without an API key. It is not optional.
 
-## Calling Codex
+## Calling Claude
 
-Model: **`Codex-opus-5`** unless the user explicitly says otherwise. Never downgrade the model to
+Model: **`claude-opus-5`** unless the user explicitly says otherwise. Never downgrade the model to
 save cost without an explicit decision — tune `effort` instead.
 
 Use `client.messages.parse()` with a Zod schema via `zodOutputFormat`. Never parse free-form text for
@@ -49,7 +49,7 @@ an accounting decision, and never regex an LLM response.
 
 ```ts
 const response = await client.messages.parse({
-  model: "Codex-opus-5",
+  model: "claude-opus-5",
   max_tokens: 16000,
   output_config: { effort: "medium", format: zodOutputFormat(BatchClassificationSchema) },
   system: [{ type: "text", text: CHART_OF_ACCOUNTS_PROMPT, cache_control: { type: "ephemeral" } }],
