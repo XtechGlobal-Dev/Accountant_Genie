@@ -1,24 +1,164 @@
-# Render — the background half of the deployment.
+# Render — the whole deployment: app, worker and queue.
 #
-# The Next.js app runs on Vercel. Vercel's functions end when the response does,
-# so the in-process job runner cannot survive there: every import, reconciliation
-# and feed sync must be handed to Redis and executed by a process that outlives
-# the request. That process is this worker.
+# The Next.js app and the background worker are two processes over one database.
+# They are separate because a serverless function ends when its response does,
+# and an accounting mutation must not be interrupted halfway: every import,
+# reconciliation and feed sync is handed to Redis and executed by a process that
+# outlives the request.
 #
 # Redis is the switch. With REDIS_URL set, `server/src/jobs/queue.ts` enqueues to
-# BullMQ instead of running the job inline — so the SAME value must be set on the
-# Vercel project and on this worker, or the app will enqueue into a queue nobody
-# reads (or, worse, run jobs inline and have them killed mid-ledger-write).
+# BullMQ instead of running the job inline. Both services take it from the
+# keyvalue service below, so they cannot disagree — the failure that a mismatch
+# produces is silent: the app enqueues into a queue nobody reads.
 #
-#   Vercel  — enqueues, streams progress from the Job/JobEvent rows
-#   Render  — this worker, dequeues and runs `runJob`
+#   web     — pages, server actions, webhooks, SSE progress; enqueues jobs
+#   worker  — dequeues and runs `runJob`
 #   Neon    — the one database both of them write to
+#
+# Because both halves are on Render the queue never leaves the private network
+# and its connection string is not exposed to the internet — see `ipAllowList`
+# on the keyvalue service.
 #
 # Deploy: Render Dashboard > Blueprints > New Blueprint Instance, pointed at this
 # repository. Secrets marked `sync: false` are entered in the dashboard and are
 # never committed.
 
 services:
+  # ---------------------------------------------------------------------------
+  # The app. Serves every page, server action and webhook, and owns the schema.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: accountant-genie-app
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    # `npm ci` alone would drop devDependencies, because Render sets
+    # NODE_ENV=production by default — and `next` and `typescript`, which the
+    # build needs, are both dev dependencies of the root package.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    # Migrations live HERE, not on the worker, and they run before this instance
+    # takes traffic. Render deploys blueprint services in parallel, so exactly
+    # one of them must own the schema step or two `db:sync-accounts` runs race
+    # each other over the same rows. The app is the right owner: a user-facing
+    # 500 from a column that does not exist yet is worse than a job that fails
+    # and is retried with backoff, which is what the worker does on its own.
+    #
+    # `db:deploy` goes over DIRECT_DATABASE_URL — Neon's pooler does not carry
+    # the advisory locks Prisma takes during a migration. `db:sync-accounts`
+    # applies src/au/coa.ts and is idempotent; it is NOT `db:seed`, which would
+    # create the demo firm a database with real clients must never get.
+    preDeployCommand: npm run db:deploy && npm run db:sync-accounts
+    # Render's default check only proves the port is open; this proves Next is
+    # rendering. /sign-in is server-rendered (it reads searchParams), so it is a
+    # real render — but it does NOT touch the database, so it still answers 200
+    # with Neon unreachable. Point this at a route that runs a query if you want
+    # a deploy to fail on a bad DATABASE_URL rather than serve 500s.
+    healthCheckPath: /sign-in
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # ---- Database (Neon) -------------------------------------------------
+      - key: DATABASE_URL # POOLED  — host contains "-pooler"
+        sync: false
+      - key: DIRECT_DATABASE_URL # DIRECT — no "-pooler"; used by migrate
+        sync: false
+      # ---- Queue -----------------------------------------------------------
+      # Private network address, resolved by Render. The worker reads the same
+      # property from the same service, so the two cannot drift apart.
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: accountant-genie-redis
+          property: connectionString
+      # ---- Auth ------------------------------------------------------------
+      # The pepper for one-time codes. Must be byte-identical to the worker's:
+      # a process that disagrees invalidates every code the other one issued.
+      - key: AUTH_SECRET
+        sync: false
+      # Sign in with Google. Redirect URI: <origin>/api/auth/google/callback
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # ---- Email -----------------------------------------------------------
+      # Without these the mailer degrades to the console transport, which in
+      # production logs that a message was NOT sent and withholds the body —
+      # so sign-up succeeds and the six-digit code never arrives.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
+      # ---- AI --------------------------------------------------------------
+      # Reconciliation runs on the worker, but the thresholds are read wherever
+      # the pipeline is constructed and the app must agree with it.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RECONCILE_BATCH_SIZE
+        value: "40"
+      - key: RECONCILE_CONFIDENCE_FLOOR
+        value: "0.75"
+      - key: RECONCILE_AUTO_CONFIDENCE
+        value: "0.95"
+      - key: RECONCILE_HIGH_RISK_CENTS
+        value: "500000"
+      - key: RECONCILE_NOVELTY_RISK_CENTS
+        value: "50000"
+      - key: RECONCILE_PRE_AI_TARGET
+        value: "0.6"
+      # ---- Storage (AWS S3) ------------------------------------------------
+      # The request writes the uploaded statement; the worker reads it back.
+      # Both must point at the same bucket. `getStorage()` throws on first use
+      # in production when S3_BUCKET is unset, rather than writing a file to a
+      # filesystem that is wiped on the next deploy.
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: ap-southeast-2
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # ---- Billing (Stripe) ------------------------------------------------
+      # Webhook endpoint: <origin>/api/stripe/webhook. The webhook is the only
+      # thing that changes a firm's plan, so a missing secret is silent.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_CORE_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_CORE_YEARLY
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_YEARLY
+        sync: false
+      - key: STRIPE_PRICE_SCALE_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_SCALE_YEARLY
+        sync: false
+      # ---- Bank feeds (Fiskil) ---------------------------------------------
+      # The app runs the consent flow and receives the webhooks; the worker
+      # calls Fiskil for the sync itself.
+      - key: FISKIL_CLIENT_ID
+        sync: false
+      - key: FISKIL_CLIENT_SECRET
+        sync: false
+      - key: FISKIL_BASE_URL
+        value: https://api.fiskil.com
+      - key: FISKIL_API_VERSION
+        value: v3
+      # Issued only when a publicly reachable endpoint is registered at
+      # console.fiskil.com. Without it /api/webhooks/fiskil answers 503 rather
+      # than trusting an unauthenticated payload. That is deliberate.
+      - key: FISKIL_WEBHOOK_SECRET
+        sync: false
+
   - type: worker
     name: accountant-genie-worker
     runtime: node
@@ -29,12 +169,10 @@ services:
     # NODE_ENV=production by default — and `tsx`, which runs the worker, is one.
     buildCommand: npm ci --include=dev && npm run generate --workspace @ledgerly/server
     startCommand: npm run worker
-    # Migrations run once per deploy, before the new worker takes traffic, and
-    # over the DIRECT url — Neon's pooler does not carry the advisory locks
-    # Prisma takes during a migration. Deploy Render BEFORE Vercel so the schema
-    # is never behind the app reading it. The account sync applies src/au/coa.ts
-    # and is idempotent; it is NOT `db:seed`, which would create the demo firm.
-    preDeployCommand: npm run db:deploy && npm run db:sync-accounts
+    # No pre-deploy step. The web service above owns the schema, because two
+    # services migrating in parallel race each other over the same rows. A
+    # worker that starts against a schema the app has not migrated yet fails
+    # its job and BullMQ retries it with backoff, which is self-healing.
     healthCheckPath: ""
     autoDeploy: true
     envVars:
@@ -54,8 +192,8 @@ services:
       - key: WORKER_CONCURRENCY
         value: "2"
       # ---- Auth ------------------------------------------------------------
-      # Must be byte-identical to the value on Vercel: it is the pepper for
-      # one-time codes, and a worker that disagrees invalidates them.
+      # Must be byte-identical to the app's: it is the pepper for one-time
+      # codes, and a process that disagrees invalidates them.
       - key: AUTH_SECRET
         sync: false
       # ---- AI --------------------------------------------------------------
@@ -110,10 +248,11 @@ services:
     region: singapore
     # BullMQ needs no eviction: a dropped job id is a job that silently never runs.
     maxmemoryPolicy: noeviction
-    ipAllowList:
-      # Vercel's egress is not a fixed range, so the app reaches Redis over the
-      # public endpoint. Replace with Render's private network by moving the app
-      # to Render, or keep the queue reachable and rely on the connection string
-      # as the credential.
-      - source: 0.0.0.0/0
-        description: everywhere (Vercel egress is not a fixed range)
+    # Empty: no public ingress at all. Both the app and the worker are Render
+    # services in this same region, so they reach the queue over the private
+    # network and the connection string is never exposed to the internet.
+    #
+    # If you need to cut over gradually and keep an off-Render app talking to
+    # this queue for a while, add `- source: 0.0.0.0/0` here temporarily — the
+    # connection string is then the only credential protecting the queue.
+    ipAllowList: []
