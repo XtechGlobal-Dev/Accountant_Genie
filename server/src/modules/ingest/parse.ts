@@ -78,14 +78,22 @@ const HEADER_HINTS: Record<keyof Omit<ColumnMap, "positional">, RegExp> = {
 const DESCRIPTION_FALLBACK = /^(payee|reference|transaction reference)$/i;
 
 /**
- * A header as the hints see it: case folded, and `money_in`, `Money-In`,
- * `running.balance` read as the words they are. Exports written by software
- * rather than by a bank use snake_case for the same columns; the hints stay
- * in plain words and the header is brought to them. The original spelling is
- * what the column map keeps, because that is what the row lookup matches.
+ * A header as the hints see it: case folded; `money_in`, `Money-In` and
+ * `running.balance` read as the words they are; and a currency tag —
+ * `Amount (AUD)`, `Balance AUD`, `Amount $` — dropped, since it names the
+ * unit, not the column. Exports written by software rather than by a bank
+ * do all three; the hints stay in plain words and the header is brought to
+ * them. The original spelling is what the column map keeps, because that is
+ * what the row lookup matches.
  */
 function headerWords(header: string): string {
-  return header.trim().replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
+  return header
+    .trim()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+(aud|nzd|usd|\$|a\$)$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Map headers to fields, or null when the essentials cannot be found. */

@@ -173,6 +173,22 @@ describe("parseStatementCsv", () => {
     expect(detectColumns(["Date", "Money-In", "Money-Out", "Description"])).toMatchObject({ credit: "Money-In", debit: "Money-Out" });
   });
 
+  it("ignores a currency tag on an amount or balance header", () => {
+    expect(detectColumns(["Date", "Description", "Amount (AUD)", "Balance (AUD)"])).toMatchObject({ amount: "Amount (AUD)", balance: "Balance (AUD)" });
+    expect(detectColumns(["Date", "Description", "Amount AUD", "Balance $"])).toMatchObject({ amount: "Amount AUD", balance: "Balance $" });
+    // A loan statement that shows principal and interest as separate lines.
+    const result = parseStatementCsv([
+      "Date,Description,Amount (AUD),Balance (AUD)",
+      "17/09/2026,LOAN PRINCIPAL REPAYMENT,-2000.0,9000.0",
+      "17/09/2026,INTEREST ON BUSINESS LOAN,-300.0,8700.0",
+    ].join("\n"));
+    expect(result.failed).toEqual([]);
+    expect(result.rows.map((r) => [r.amountCents, r.balanceCents, r.description])).toEqual([
+      [-200_000, 900_000, "LOAN PRINCIPAL REPAYMENT"],
+      [-30_000, 870_000, "INTEREST ON BUSINESS LOAN"],
+    ]);
+  });
+
   it("falls back to a Reference column only when nothing names the description", () => {
     expect(detectColumns(["Date", "Reference", "Amount"])?.description).toBe("Reference");
     expect(detectColumns(["Date", "Reference", "Transaction description", "Amount"])?.description).toBe("Transaction description");
