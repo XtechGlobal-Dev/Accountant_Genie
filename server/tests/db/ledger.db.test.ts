@@ -137,6 +137,34 @@ describe("the ledger balances after real postings", () => {
     expect(posted?.journalEntryId).not.toBeNull();
   });
 
+  it("posts an opening balance with no GST, even on a capital-treatment asset account", async () => {
+    // A firm's own asset account carrying GST on capital — allowed, and the
+    // treatment a real ute purchase in the period would use.
+    const ute = await db.account.create({
+      data: { firmId, code: 1720, name: "Motor Vehicles", type: "ASSET", gstTreatment: "GST_ON_CAPITAL" },
+      select: { id: true },
+    });
+    const capital = await db.account.findFirst({ where: { code: 900, firmId: null }, select: { id: true } });
+    const opening = await ledger.postJournal(firmId, userId, clientId, {
+      date: new Date("2027-07-01T00:00:00.000Z"),
+      source: "OPENING",
+      lines: [
+        { accountId: ute.id, debitCents: 4_000_000, creditCents: 0 },
+        { accountId: capital!.id, debitCents: 0, creditCents: 4_000_000 },
+      ],
+    });
+    expect(opening.ok).toBe(true);
+
+    const line = await db.journalLine.findFirst({ where: { accountId: ute.id } });
+    expect(line?.gstCents).toBe(0);
+    expect(line?.gstTreatment).toBe("BAS_EXCLUDED");
+
+    // The ute brought forward is nowhere on the BAS: neither $40,000 at G10 nor $3,636.36 at 1B.
+    const bas = await reports.getSimpleBas(firmId, clientId, resolvePeriod({ fy: "2028" }));
+    expect(bas?.bas.figures.G10.cents).toBe(0);
+    expect(bas?.bas.figures["1B"].cents).toBe(0);
+  });
+
   it("splits a loan repayment into principal and interest at acceptance", async () => {
     const loan = await db.loan.create({
       data: {

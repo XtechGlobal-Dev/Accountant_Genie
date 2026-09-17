@@ -21,13 +21,19 @@ const { syncSystemAccounts } = await import("../prisma/accounts-sync.js");
 const { db } = await import("../src/core/db.js");
 
 console.log("\nSyncing the system chart of accounts…\n");
-const { created, updated, deleted, deactivated } = await syncSystemAccounts(db, (line) =>
+const { created, updated, deleted, deactivated, conflicts } = await syncSystemAccounts(db, (line) =>
   console.log(line),
 );
 
 console.log(
-  `\n  ${created} created · ${updated} updated · ${deleted} removed · ${deactivated} deactivated`,
+  `\n  ${created} created · ${updated} updated · ${deleted} removed · ${deactivated} deactivated` +
+    (conflicts > 0 ? ` · ${conflicts} NOT changed` : ""),
 );
+if (conflicts > 0) {
+  console.log(
+    "  A code that has been posted to keeps its type and tax treatment. Give the new account a new code and retire the old one.",
+  );
+}
 
 const total = await db.account.count({ where: { firmId: null, clientId: null, isActive: true } });
 const flagged = await db.account.count({ where: { requiresVerification: true, isActive: true } });
