@@ -3,7 +3,7 @@ import "server-only";
 import { db, type DbClient } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
 import type { GstTreatment } from "@/shared/enums";
-import { gstFromGross, naturalGross } from "@/server/au/gst";
+import { snapshotGst } from "./snapshot";
 import { financialYearOf, financialYearRange } from "@/server/au/fy";
 import { GST_RULES_VERSION } from "@/server/modules/tax-rules/catalogue";
 import * as clients from "@/server/modules/clients/repository";
@@ -151,9 +151,9 @@ export async function postJournal(
     }
   }
 
-  // GST is a deterministic function of the account's treatment and the
-  // client's registration. An unregistered client claims nothing and charges
-  // nothing, so every line is whole. Never read from the request.
+  // GST is a deterministic function of the account's treatment, the client's
+  // registration and the entry's source — see `snapshot.ts`. Never read from
+  // the request.
   // A subcontractor named on a line must be this client's own.
   const subIds = [...new Set(input.lines.map((l) => l.subcontractorId).filter((id): id is string => !!id))];
   if (subIds.length > 0) {
@@ -164,14 +164,18 @@ export async function postJournal(
 
   const lines = input.lines.map((line) => {
     const account = accounts.get(line.accountId)!;
-    const gross = naturalGross(account.gstTreatment, line.debitCents, line.creditCents);
     return {
       accountId: account.id,
       description: line.description || null,
       debitCents: line.debitCents,
       creditCents: line.creditCents,
-      gstCents: client.gstRegistered ? gstFromGross(gross, account.gstTreatment) : 0,
-      gstTreatment: account.gstTreatment,
+      ...snapshotGst({
+        source: input.source,
+        accountTreatment: account.gstTreatment,
+        debitCents: line.debitCents,
+        creditCents: line.creditCents,
+        gstRegistered: client.gstRegistered,
+      }),
       subcontractorId: line.subcontractorId || null,
     };
   });
@@ -286,14 +290,18 @@ export async function postBankTransactionInTx(
     .map((a) => {
       const debitCents = moneyOut ? a.cents : 0;
       const creditCents = moneyOut ? 0 : a.cents;
-      const gross = naturalGross(a.gstTreatment, debitCents, creditCents);
       return {
         accountId: a.accountId,
         description: a.description ?? null,
         debitCents,
         creditCents,
-        gstCents: posting.gstRegistered ? gstFromGross(gross, a.gstTreatment) : 0,
-        gstTreatment: a.gstTreatment,
+        ...snapshotGst({
+          source: "BANK",
+          accountTreatment: a.gstTreatment,
+          debitCents,
+          creditCents,
+          gstRegistered: posting.gstRegistered,
+        }),
         subcontractorId: a.subcontractorId ?? null,
         bankTransactionId: posting.bankTransactionId,
       };

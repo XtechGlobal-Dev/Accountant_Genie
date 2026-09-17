@@ -2,9 +2,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { randomBytes, scrypt } from "node:crypto";
 import { PrismaClient } from "../generated/prisma/client.js";
 import { syncSystemAccounts } from "./accounts-sync.js";
-import { gstFromGross, naturalGross } from "../src/au/gst.js";
+import { snapshotGst } from "../src/modules/ledger/snapshot.js";
 import { seedProposals } from "../src/modules/tax-rules/catalogue.js";
-import type { GstTreatment } from "../generated/prisma/client.js";
 
 // The environment may already be set (CI, a host): a missing .env is not an error.
 try {
@@ -50,8 +49,8 @@ interface SeedJournal {
 
 /**
  * A quarter of Horizon's books, posted the way the ledger service would post
- * them: GST from the account's treatment (gross / 11), snapshotted on the
- * line; totals equal by construction. Enough for the P&L, the BAS, the TPAR
+ * them: GST from the account's treatment (gross / 11), none on the opening
+ * balance, snapshotted on the line; totals equal by construction. Enough for the P&L, the BAS, the TPAR
  * and the balance sheet to show real figures in a demo.
  */
 const SUBCONTRACTOR_ID = "demo-sub-formwork-plus";
@@ -157,15 +156,20 @@ async function seedJournals(clientId: string, postedById: string) {
       if (!account) throw new Error(`Seed journal references unknown account ${line.code}`);
       const debitCents = line.debit ?? 0;
       const creditCents = line.credit ?? 0;
-      const treatment: GstTreatment = account.gstTreatment;
-      const gross = naturalGross(treatment, debitCents, creditCents);
+      // Horizon is GST-registered. The rule is the ledger service's own, so an
+      // opening balance carries no GST here either.
       return {
         accountId: account.id,
         description: line.description ?? null,
         debitCents,
         creditCents,
-        gstCents: gstFromGross(gross, treatment),
-        gstTreatment: treatment,
+        ...snapshotGst({
+          source: journal.source,
+          accountTreatment: account.gstTreatment,
+          debitCents,
+          creditCents,
+          gstRegistered: true,
+        }),
         subcontractorId: line.subcontractorId ?? null,
       };
     });
@@ -229,11 +233,12 @@ async function main() {
   console.log(`  user     ${user.name} <${user.email}>  password: ${demoPassword}`);
 
   // -------------------------------------------------- Chart of accounts
-  const { created, updated, deleted, deactivated } = await syncSystemAccounts(db, (line) =>
+  const { created, updated, deleted, deactivated, conflicts } = await syncSystemAccounts(db, (line) =>
     console.log(line),
   );
   console.log(
-    `  accounts ${created} created, ${updated} updated, ${deleted} removed, ${deactivated} deactivated`,
+    `  accounts ${created} created, ${updated} updated, ${deleted} removed, ${deactivated} deactivated` +
+      (conflicts > 0 ? `, ${conflicts} NOT changed (posted to under another meaning — see above)` : ""),
   );
 
   const flagged = await db.account.count({ where: { requiresVerification: true } });
