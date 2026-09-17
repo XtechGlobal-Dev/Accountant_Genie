@@ -4,7 +4,7 @@ import { createHash, randomInt } from "node:crypto";
 import { cookies } from "next/headers";
 import { db, type DbClient } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
-import { getMailer, mailIsConsoleOnly } from "@/server/core/mail";
+import { deliver, type MailOutcome } from "@/server/core/mail";
 import { hashPassword, temporaryPassword, verifyPassword } from "@/server/core/password";
 import { createSession, destroyAllSessions, destroySession } from "@/server/core/session";
 import {
@@ -73,7 +73,28 @@ async function throttled(kind: string, subject: string, ip: string | null): Prom
 /* One-time codes                                                             */
 /* -------------------------------------------------------------------------- */
 
-async function issueCode(userId: string, email: string, purpose: OtpPurpose): Promise<string> {
+/**
+ * What a caller shows when a code could not be sent. It names no address and
+ * no provider: the person can act on neither, and the reset flow has to be
+ * able to say this without confirming that an account exists.
+ */
+const CODE_NOT_SENT = "We could not send your code just now. Please try again in a moment.";
+
+/** The one sentence a step shows when the code only reached the server log. */
+const CODE_IN_LOG = "No email provider is configured: the code was written to the server log.";
+
+type IssuedCode = { ok: true; otpId: string; outcome: MailOutcome } | { ok: false; error: string };
+
+/**
+ * Mint a one-time code and email it.
+ *
+ * A code nobody received is worse than no code: it stays live for its whole
+ * window, it is what the pending cookie then points at, and the person is left
+ * at a verification box that cannot be satisfied. So a refused email takes the
+ * row with it and the caller is told — rather than the provider's 403 escaping
+ * as an unhandled error with the row already written.
+ */
+async function issueCode(userId: string, email: string, purpose: OtpPurpose): Promise<IssuedCode> {
   const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
   const row = await db.otpCode.create({
     data: {
@@ -87,13 +108,19 @@ async function issueCode(userId: string, email: string, purpose: OtpPurpose): Pr
 
   const subject =
     purpose === "PASSWORD_RESET" ? "Your Accountant Genie password reset code" : "Your Accountant Genie sign-in code";
-  await getMailer().send({
+  const outcome = await deliver({
     to: email,
     subject,
     text: `Your code is ${code}. It expires in ${OTP_MINUTES} minutes.\n\nIf you did not request this, ignore this message.`,
   });
 
-  return row.id;
+  if (outcome === "failed") {
+    // Best effort: if the delete also fails the code still expires on its own.
+    await db.otpCode.delete({ where: { id: row.id } }).catch(() => {});
+    return { ok: false, error: CODE_NOT_SENT };
+  }
+
+  return { ok: true, otpId: row.id, outcome };
 }
 
 async function setPending(otpId: string): Promise<void> {
@@ -174,13 +201,10 @@ export async function signIn(email: string, password: string, ip: string | null)
   // rather than asked for again. The password above was still required.
   if (await deviceIsTrusted(user.id)) return completeSignIn(user, "device");
 
-  const otpId = await issueCode(user.id, user.email, "SIGN_IN");
-  await setPending(otpId);
-  return {
-    ok: true,
-    next: "/verify",
-    note: mailIsConsoleOnly() ? "No email provider is configured: the code was written to the server log." : null,
-  };
+  const issued = await issueCode(user.id, user.email, "SIGN_IN");
+  if (!issued.ok) return { ok: false, error: issued.error };
+  await setPending(issued.otpId);
+  return { ok: true, next: "/verify", note: issued.outcome === "logged" ? CODE_IN_LOG : null };
 }
 
 /**
@@ -358,13 +382,14 @@ export async function signUp(input: {
     return created;
   });
 
-  const otpId = await issueCode(user.id, user.email, "SIGN_IN");
-  await setPending(otpId);
-  return {
-    ok: true,
-    next: "/verify",
-    note: mailIsConsoleOnly() ? "No email provider is configured: the code was written to the server log." : null,
-  };
+  // The firm and the owner are committed by now, so a refused email cannot
+  // undo the account — it only means this browser has no code to enter. Saying
+  // so plainly beats a generic error: the account exists and signing in again
+  // is the way back.
+  const issued = await issueCode(user.id, user.email, "SIGN_IN");
+  if (!issued.ok) return { ok: false, error: issued.error };
+  await setPending(issued.otpId);
+  return { ok: true, next: "/verify", note: issued.outcome === "logged" ? CODE_IN_LOG : null };
 }
 
 export async function resendCode(ip: string | null): Promise<StepResult> {
@@ -377,9 +402,14 @@ export async function resendCode(ip: string | null): Promise<StepResult> {
     select: { purpose: true, user: { select: { id: true, email: true } } },
   });
   if (!row) return { ok: false, error: "Start again from sign in" };
-  const next = await issueCode(row.user.id, row.user.email, row.purpose);
-  await setPending(next);
-  return { ok: true, next: row.purpose === "PASSWORD_RESET" ? "/reset" : "/verify", note: "A new code was sent." };
+  const issued = await issueCode(row.user.id, row.user.email, row.purpose);
+  if (!issued.ok) return { ok: false, error: issued.error };
+  await setPending(issued.otpId);
+  return {
+    ok: true,
+    next: row.purpose === "PASSWORD_RESET" ? "/reset" : "/verify",
+    note: issued.outcome === "logged" ? CODE_IN_LOG : "A new code was sent.",
+  };
 }
 
 export async function signOut(firmId: string, userId: string): Promise<void> {
@@ -399,15 +429,19 @@ export async function requestPasswordReset(email: string, ip: string | null): Pr
 
   const user = await db.user.findUnique({ where: { email }, select: { id: true, email: true } });
   // Always the same answer, so the form cannot confirm whether an email is registered.
+  // A send failure is swallowed here on purpose. Every other flow reports it,
+  // but this form must answer identically whether or not the address is
+  // registered, and "we could not send your code" would confirm that it is.
+  // The provider's reason is in the server log either way.
+  let outcome: MailOutcome | null = null;
   if (user) {
-    const otpId = await issueCode(user.id, user.email, "PASSWORD_RESET");
-    await setPending(otpId);
+    const issued = await issueCode(user.id, user.email, "PASSWORD_RESET");
+    if (issued.ok) {
+      outcome = issued.outcome;
+      await setPending(issued.otpId);
+    }
   }
-  return {
-    ok: true,
-    next: "/reset",
-    note: mailIsConsoleOnly() && user ? "No email provider is configured: the code was written to the server log." : null,
-  };
+  return { ok: true, next: "/reset", note: outcome === "logged" ? CODE_IN_LOG : null };
 }
 
 export async function resetPassword(code: string, password: string): Promise<StepResult> {
@@ -529,7 +563,7 @@ export async function listTeam(firmId: string): Promise<TeamMember[]> {
 }
 
 export type InviteResult =
-  | { ok: true; id: string; temporaryPassword: string | null }
+  | { ok: true; id: string; temporaryPassword: string | null; mail: MailOutcome }
   | { ok: false; error: string; field?: string };
 
 /**
@@ -563,13 +597,18 @@ export async function inviteUser(
     return created.id;
   });
 
-  await getMailer().send({
+  const outcome = await deliver({
     to: input.email,
     subject: "You have been added to Accountant Genie",
     text: `${input.name}, you have been added to an Accountant Genie firm as ${input.role.toLowerCase()}.\n\nSign in with this temporary password and change it straight away:\n${password}\n`,
   });
 
-  return { ok: true, id, temporaryPassword: mailIsConsoleOnly() ? password : null };
+  // The colleague's account is committed, so a refused email does not undo the
+  // invitation — it only means the password did not travel. Hand it back to the
+  // person who issued it, exactly as the console transport already does: they
+  // created the account and can pass it on out of band. It must be changed on
+  // first sign-in either way.
+  return { ok: true, id, temporaryPassword: outcome === "sent" ? null : password, mail: outcome };
 }
 
 /**

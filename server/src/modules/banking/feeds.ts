@@ -3,7 +3,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { db } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
-import { getMailer, mailIsConsoleOnly } from "@/server/core/mail";
+import { deliver, type MailOutcome } from "@/server/core/mail";
 import type {
   FeedConnectionRow,
   FeedInstitutionOption,
@@ -601,7 +601,7 @@ export async function revokeFeedConnection(
 /* -------------------------------------------------------------------------- */
 
 export type FeedRequestResult =
-  | { ok: true; id: string; previewUrl: string | null }
+  | { ok: true; id: string; previewUrl: string | null; mail: MailOutcome }
   | { ok: false; error: string; field?: string };
 
 export async function requestBankFeed(
@@ -640,7 +640,7 @@ export async function requestBankFeed(
   });
 
   const link = `${baseUrl}/feed/${token}`;
-  await getMailer().send({
+  const outcome = await deliver({
     to: email,
     subject: `${client.businessName}: authorise a bank feed`,
     text:
@@ -651,7 +651,11 @@ export async function requestBankFeed(
       `If you were not expecting this, you can ignore it.`,
   });
 
-  return { ok: true, id, previewUrl: mailIsConsoleOnly() ? `/feed/${token}` : null };
+  // The request row is committed and the token is already minted, so a refused
+  // email costs the client nothing — it only means the link did not travel.
+  // Give it to the accountant to pass on, as the console transport already
+  // does. It expires on the same schedule either way.
+  return { ok: true, id, previewUrl: outcome === "sent" ? null : `/feed/${token}`, mail: outcome };
 }
 
 export async function cancelFeedRequest(
