@@ -199,6 +199,12 @@ export function UploadStatementModal({
                 person with a rejected file and no idea what shape was wanted.
                 The sample is that shape, and it is the real one: a test feeds
                 this exact file through the parser, so it cannot drift.
+
+                It carries a letterhead because real exports do, which raises
+                the opposite worry — that the letterhead is the required part.
+                Saying it is skipped is the whole point of mentioning it: the
+                person reading this has just had a file refused and is about to
+                start deleting rows to find out which one offended.
               */}
               <p className="text-xs text-ink-3">
                 Not sure of the format?{" "}
@@ -209,7 +215,9 @@ export function UploadStatementModal({
                 >
                   Download a sample CSV
                 </a>
-                {" "}and match its columns.
+                {" "}and match its columns. Your bank&rsquo;s letterhead above the header row is
+                fine — it is skipped. Dates are day first (02/07/2026 is 2 July) and one signed
+                Amount column, negative for money out.
               </p>
             </div>
 
