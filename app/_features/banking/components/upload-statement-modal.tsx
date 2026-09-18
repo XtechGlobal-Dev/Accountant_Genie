@@ -268,7 +268,7 @@ export function UploadStatementModal({
                   Download a sample CSV
                 </a>
                 {" "}and match its columns. Your bank&rsquo;s letterhead above the header row is
-                fine — it is skipped. Dates are day first (02/07/2026 is 2 July) and one signed
+                fine — it is skipped. Dates are day first (12/09/2026 is 12 September) and one signed
                 Amount column, negative for money out.
               </p>
             </div>
