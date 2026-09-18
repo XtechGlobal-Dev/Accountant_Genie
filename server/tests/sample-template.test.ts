@@ -13,12 +13,17 @@ import { parseStatementAmount, parseStatementCsv } from "@/server/modules/ingest
  * in CI rather than in front of a customer.
  *
  * It is deliberately a *realistic* export rather than a bare grid of columns:
- * a letterhead above the header row, `(AUD)` tags on the money columns, and a
- * closing-balance footer below the last transaction. Those are the three
- * shapes real bank exports arrive in and the parser learned to read, so the
- * sample doubles as their regression case — someone whose own statement opens
- * with a letterhead can see that it is expected rather than the reason their
- * upload was refused.
+ * a letterhead above the header row, a `Reference` column beside the
+ * description that most rows leave empty, and a closing-balance footer below
+ * the last transaction. Those are the shapes real bank exports arrive in and
+ * the parser learned to read, so the sample doubles as their regression case —
+ * someone whose own statement opens with a letterhead can see that it is
+ * expected rather than the reason their upload was refused.
+ *
+ * The thirty transactions are one September of a small Australian business:
+ * customer payments, subscriptions, rent, wages, a loan repayment with its
+ * interest on its own line, an ATO payment — every tier of the coding engine
+ * has something to do with it.
  */
 const TEMPLATE = path.join(process.cwd(), "..", "public", "sample-bank-statement.csv");
 const text = readFileSync(TEMPLATE, "utf8");
@@ -68,21 +73,34 @@ describe("the sample statement offered in the upload modal", () => {
     expect(result.columns.positional).toBeFalsy();
   });
 
-  it("finds the money columns through their currency tags", () => {
-    // `Amount (AUD)` names the unit, not the column. The map keeps the
-    // original spelling, because that is what the row lookup matches.
-    expect(result.columns.amount).toMatch(/\(AUD\)/);
-    expect(result.columns.balance).toMatch(/\(AUD\)/);
+  it("codes from the description, not the reference column beside it", () => {
+    // A `Reference` column is noise to the rules, the memory and the model
+    // alike; it names the narration only when nothing better does.
+    expect(result.columns.description).toBe("Description");
+    expect(result.columns.amount).toBe("Amount");
+    expect(result.columns.balance).toBe("Balance");
     expect(result.columns.debit).toBeUndefined();
     expect(result.columns.credit).toBeUndefined();
+    expect(result.rows[0]?.description).toBe("OFFICEWORKS - STATIONERY");
   });
 
-  it("is dated across one Australian BAS quarter, day before month", () => {
-    // 02/07/2026 is 2 July, not 7 February. Read the American way the dates
-    // would still be valid, so the months are asserted rather than the count.
-    const months = [...new Set(result.rows.map((r) => r.date.getUTCMonth()))].sort((a, b) => a - b);
-    expect(months).toEqual([6, 7, 8]); // Jul, Aug, Sep — Q1 of FY2027
-    for (const row of result.rows) expect(row.date.getUTCFullYear()).toBe(2026);
+  it("carries the thirty transactions, and the opening balance is not one of them", () => {
+    // An "OPENING BALANCE" row with a date and an amount would import as a
+    // $12,000 receipt. The figure belongs in the letterhead, where the parser
+    // skips it and the balance column still reconciles from it.
+    expect(result.rows).toHaveLength(30);
+    expect(result.rows.some((r) => /opening balance/i.test(r.description))).toBe(false);
+  });
+
+  it("is dated through one September, day before month", () => {
+    // 12/09/2026 is 12 September, not 9 December. Read the American way most
+    // of the dates would still be valid, so the month is asserted, not the count.
+    for (const row of result.rows) {
+      expect(row.date.getUTCFullYear()).toBe(2026);
+      expect(row.date.getUTCMonth()).toBe(8); // September — Q1 of FY2027
+    }
+    expect(result.rows[0]?.date.getUTCDate()).toBe(2);
+    expect(result.rows.at(-1)?.date.getUTCDate()).toBe(30);
   });
 
   /*
