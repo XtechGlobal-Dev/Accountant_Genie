@@ -194,6 +194,23 @@ export function UploadStatementModal({
                 <span className="text-xs text-ink-3">Up to 10 MB. Scanned PDFs have no text to read and are refused.</span>
               </label>
               {field === "file" && error ? <p className="text-xs font-medium text-negative-ink">{error}</p> : null}
+              {/*
+                A bank that exports something the parser cannot read leaves the
+                person with a rejected file and no idea what shape was wanted.
+                The sample is that shape, and it is the real one: a test feeds
+                this exact file through the parser, so it cannot drift.
+              */}
+              <p className="text-xs text-ink-3">
+                Not sure of the format?{" "}
+                <a
+                  href="/sample-bank-statement.csv"
+                  download
+                  className="font-semibold text-accent underline-offset-2 hover:underline"
+                >
+                  Download a sample CSV
+                </a>
+                {" "}and match its columns.
+              </p>
             </div>
 
             <p className="text-xs leading-relaxed text-ink-3">

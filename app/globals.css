@@ -188,6 +188,18 @@
     background: color-mix(in oklab, var(--color-accent-soft) 55%, transparent);
   }
 
+  /* The journals sheet: an entry is a block of rows — the first carries the
+     number, date and description; a GST split adds a continuation row. The
+     divider between rows of one entry is dropped so the block reads as one
+     journal, and the entry's own divider stays. */
+  .sheet table.journal tbody tr:has(+ tr.continuation) td {
+    border-bottom: 0;
+    padding-bottom: 0.3rem;
+  }
+  .sheet table.journal tbody tr.continuation td {
+    padding-top: 0.3rem;
+  }
+
   /* The review sheet: two-line rows, so each cell gets more air than the
      default register and the eye can rest between transactions. */
   .sheet table.review thead th {
