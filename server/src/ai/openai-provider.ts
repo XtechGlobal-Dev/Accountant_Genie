@@ -30,13 +30,37 @@ import {
   type SubcontractorResponse,
 } from "./types";
 
+/**
+ * How long one request may take, and how many times the SDK may repeat it.
+ *
+ * The SDK's defaults are a ten-minute timeout and two retries, so a request
+ * that hangs occupies the job for up to thirty minutes without emitting a
+ * stage event. `reapStaleJobs` declares a job dead at thirty minutes, so the
+ * default configuration loses the race: the Activity Panel shows a statement
+ * stuck on "Coding transactions" and the run is eventually marked
+ * STALE_RUNNING while its HTTP request is still in flight. That was observed
+ * in production, not theorised.
+ *
+ * Five minutes is roughly twice the slowest classification measured against a
+ * full batch (156s). One retry keeps the worst case — two calls, classifier
+ * and reviewer, two attempts each — at twenty minutes, comfortably inside the
+ * reaper's window. A timeout returns a `ProviderFailure` like any other error,
+ * so the batch routes to human review rather than being coded on a guess.
+ *
+ * The Anthropic provider reaches the same end by streaming (see its note on
+ * the non-streaming timeout). Streaming `responses.parse` here would be the
+ * better fix and is the obvious follow-up.
+ */
+const REQUEST_TIMEOUT_MS = 300_000;
+const MAX_RETRIES = 1;
+
 export class OpenAIProvider implements AccountingAIProvider {
   readonly name = "openai";
   readonly model: string;
   private client: OpenAI;
 
   constructor(apiKey: string, model: string) {
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES });
     this.model = model;
   }
 
