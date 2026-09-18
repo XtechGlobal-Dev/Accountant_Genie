@@ -125,6 +125,58 @@ export function UploadStatementModal({
               {stats.aiFailure}. Those transactions are waiting in review as Unknown; nothing was guessed.
             </Alert>
           ) : null}
+          {stats && stats.reviewer.checked > 0 ? (
+            <div className="rounded-2xl border border-rule bg-surface-2 px-4 py-3 text-sm">
+              <p className="font-semibold text-ink">
+                AI reviewer checked {stats.reviewer.checked.toLocaleString("en-AU")} coding{stats.reviewer.checked === 1 ? "" : "s"}
+              </p>
+              <p className="mt-1 text-ink-2">
+                Agreed with {stats.reviewer.agreed.toLocaleString("en-AU")}
+                {stats.reviewer.disagreed > 0 ? ` · disagreed with ${stats.reviewer.disagreed.toLocaleString("en-AU")}` : ""}
+                {stats.reviewer.escalated > 0 ? ` · asked for a person on ${stats.reviewer.escalated.toLocaleString("en-AU")}` : ""}
+                {stats.reviewer.cleared > 0
+                  ? ` · ${stats.reviewer.cleared.toLocaleString("en-AU")} moved to Ready that would otherwise have waited for you`
+                  : ""}
+              </p>
+            </div>
+          ) : null}
+          {stats?.reviewer.failure ? (
+            <Alert tone="warning" title="The AI reviewer did not answer">
+              {stats.reviewer.failure}. The codings kept the routing the classifier gave them; nothing was cleared.
+            </Alert>
+          ) : null}
+          {stats && stats.accountsCreated.length > 0 ? (
+            <div className="rounded-2xl border border-rule bg-surface-2 px-4 py-3 text-sm">
+              <p className="font-semibold text-ink">
+                {stats.accountsCreated.length === 1 ? "1 new account created" : `${stats.accountsCreated.length} new accounts created`}
+              </p>
+              <ul className="mt-1.5 flex flex-col gap-1">
+                {stats.accountsCreated.map((account) => (
+                  <li key={account.code} className="flex items-baseline gap-2 text-ink-2">
+                    <span aria-hidden="true" className="text-positive-ink">✓</span>
+                    <span className="font-medium text-ink">{account.name}</span>
+                    <span className="figure text-xs text-ink-3">Code {account.code}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs text-ink-3">
+                Created from transaction classification and flagged for the advisor. A transaction coded to one is Ready only when the AI reviewer confirmed the account; otherwise it waits in review so someone confirms it once.
+              </p>
+            </div>
+          ) : null}
+          {stats && stats.needsReview > 0 && stats.reviewReasons.length > 0 ? (
+            <div className="rounded-2xl border border-rule bg-surface-2 px-4 py-3 text-sm">
+              <p className="font-semibold text-ink">Why {stats.needsReview === 1 ? "it needs" : "they need"} a look</p>
+              <ul className="mt-1.5 flex flex-col gap-1">
+                {stats.reviewReasons.map((entry) => (
+                  <li key={entry.reason} className="flex items-baseline justify-between gap-3 text-ink-2">
+                    <span className="min-w-0 truncate" title={entry.reason}>{entry.reason}</span>
+                    <span className="figure shrink-0 text-xs text-ink-3">{entry.count.toLocaleString("en-AU")}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       ) : (
         <form onSubmit={submitWith(submit)}>

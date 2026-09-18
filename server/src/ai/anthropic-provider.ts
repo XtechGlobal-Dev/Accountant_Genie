@@ -2,24 +2,32 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import {
   PROMPT_VERSION,
+  REVIEW_PROMPT_VERSION,
   SUBCONTRACTOR_PROMPT_VERSION,
+  buildReviewStableContext,
+  buildReviewTransactionContext,
   buildStableContext,
   buildSubcontractorContext,
   buildTransactionContext,
   hashInput,
   loadClassificationPrompt,
+  loadReviewPrompt,
   loadSubcontractorPrompt,
 } from "./prompt";
 import {
   ClassificationBatchSchema,
+  ReviewBatchSchema,
   SubcontractorBatchSchema,
   sanitiseResult,
+  sanitiseReview,
   sanitiseSubcontractor,
   type AccountingAIProvider,
   type ClassificationInput,
   type ClassificationResponse,
   type ProviderFailure,
   type ProviderMeta,
+  type ReviewInput,
+  type ReviewResponse,
   type SubcontractorInput,
   type SubcontractorResponse,
 } from "./types";
@@ -102,6 +110,46 @@ export class AnthropicProvider implements AccountingAIProvider {
       if (failure) return { results: [], meta, failure };
 
       return { results: response.parsed_output!.results.map(sanitiseResult), meta };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { results: [], meta, failure: { kind: "error", detail } };
+    }
+  }
+
+  /**
+   * The second opinion. Same shape as classification — a cached stable prefix
+   * (the reviewer prompt, the chart, the memory, the signed-off history) and
+   * a varying batch — and the same two guards: a refusal or an unparseable
+   * body never becomes a verdict, and the rows keep the routing the
+   * classifier gave them.
+   */
+  async reviewClassifications(input: ReviewInput): Promise<ReviewResponse> {
+    const meta: ProviderMeta = { provider: this.name, model: this.model, promptVersion: REVIEW_PROMPT_VERSION };
+    try {
+      const systemPrompt = loadReviewPrompt();
+      const stable = buildReviewStableContext(input);
+      const batch = buildReviewTransactionContext(input);
+      meta.inputHash = hashInput(systemPrompt, stable, batch);
+
+      const response = await this.client.messages
+        .stream({
+          model: this.model,
+          max_tokens: MAX_TOKENS,
+          system: [
+            { type: "text", text: systemPrompt },
+            { type: "text", text: stable, cache_control: { type: "ephemeral" } },
+          ],
+          messages: [{ role: "user", content: batch }],
+          output_config: { format: zodOutputFormat(ReviewBatchSchema) },
+        })
+        .finalMessage();
+
+      Object.assign(meta, usageOf(response, this.model));
+
+      const failure = failureOf(response);
+      if (failure) return { results: [], meta, failure };
+
+      return { results: response.parsed_output!.results.map(sanitiseReview), meta };
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       return { results: [], meta, failure: { kind: "error", detail } };

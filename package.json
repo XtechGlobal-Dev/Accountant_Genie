@@ -24,6 +24,7 @@
     "db:studio": "npm run db:studio --workspace @ledgerly/server",
     "db:constraints": "npm run db:constraints --workspace @ledgerly/server",
     "db:purge-demo": "npm run db:purge-demo --workspace @ledgerly/server",
+    "db:purge-clients": "npm run db:purge-clients --workspace @ledgerly/server",
     "db:backfill-tax-rules": "npm run db:backfill-tax-rules --workspace @ledgerly/server",
     "ai:models": "npm run ai:models --workspace @ledgerly/server",
     "ai:golden": "npm run ai:golden --workspace @ledgerly/server",

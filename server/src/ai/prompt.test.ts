@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildContext, buildStableContext, buildTransactionContext, loadClassificationPrompt } from "./prompt";
+import {
+  buildContext,
+  buildReviewContext,
+  buildReviewStableContext,
+  buildReviewTransactionContext,
+  buildStableContext,
+  buildTransactionContext,
+  loadClassificationPrompt,
+  loadReviewPrompt,
+} from "./prompt";
 import type { ClassificationInput } from "./types";
 
 const input: ClassificationInput = {
@@ -19,7 +28,7 @@ describe("loadClassificationPrompt", () => {
     // The worker and the tests run from server/; the Next process runs from the
     // repository root. Resolving one cwd-relative path works in only one of them.
     const prompt = loadClassificationPrompt();
-    expect(prompt).toContain("transaction-classification v3");
+    expect(prompt).toContain("transaction-classification v4");
     expect(prompt).toContain("Abstention is correct");
   });
 });
@@ -111,5 +120,66 @@ describe("context", () => {
     expect(prompt).toContain("## Bank feed category");
     expect(prompt).toContain("It never outranks coding memory");
     expect(prompt).toContain("It is not evidence about GST");
+  });
+});
+
+describe("review context", () => {
+  const review = {
+    transactions: [
+      {
+        ref: "t1",
+        description: "ADOBE AUSTRALIA CARD 4523 PAYID bob@example.com",
+        amountCents: -110000,
+        date: "2026-09-05",
+        proposal: { accountCode: 470, accountName: "Subscriptions", gstTreatment: "GST_ON_EXPENSES" as const, confidence: 0.91, reason: "cloud software", vendor: "Adobe", category: "Software subscription" },
+        proposedAccount: null,
+        classifierConcern: "Confirm business use",
+        firstSeen: true,
+      },
+      {
+        ref: "t2",
+        description: "CHARITY DONATION RED CROSS",
+        amountCents: -20000,
+        date: "2026-09-06",
+        proposal: { accountCode: 0, accountName: "Donations", gstTreatment: "BAS_EXCLUDED" as const, confidence: 0.96, reason: "no account for donations", vendor: null, category: null },
+        proposedAccount: { name: "Donations", type: "EXPENSE" as const, gstTreatment: "BAS_EXCLUDED" as const },
+        classifierConcern: null,
+        firstSeen: false,
+      },
+    ],
+    client: input.client,
+    accounts: input.accounts,
+    memory: input.memory,
+    history: [{ date: "2026-08-05", description: "ADOBE AUSTRALIA CARD 9911", amountCents: -110000, accountCode: 470, gstTreatment: "GST_ON_EXPENSES" as const }],
+  };
+
+  it("finds the reviewer prompt on disk", () => {
+    const prompt = loadReviewPrompt();
+    expect(prompt).toContain("transaction-review v1");
+    expect(prompt).toContain("When in doubt, escalate");
+  });
+
+  it("puts the signed-off history in the stable half, masked, and the codings in the batch half", () => {
+    const stable = buildReviewStableContext(review);
+    expect(stable).toContain("## Signed-off history for this client");
+    expect(stable).toContain("2026-08-05 | -1100.00 | ADOBE AUSTRALIA CARD [card] | 470 | GST_ON_EXPENSES");
+    expect(stable).toContain("310 | Materials | EXPENSE | GST_ON_EXPENSES | Job materials");
+    expect(stable).not.toContain("Codings to review");
+
+    const batch = buildReviewTransactionContext(review);
+    expect(batch).toContain("t1 | 2026-09-05 | -1100.00 | ADOBE AUSTRALIA CARD [card] PAYID [email]");
+    expect(batch).toContain('  proposed: 470 Subscriptions | GST_ON_EXPENSES | confidence 0.91 | "cloud software"');
+    expect(batch).toContain("  read as: vendor Adobe; supply Software subscription");
+    expect(batch).toContain("  classifier asked for a person: Confirm business use");
+    expect(batch).toContain("  first time this merchant is seen for the client");
+    expect(batch).toContain('  new account proposed: "Donations" | EXPENSE | BAS_EXCLUDED');
+    expect(batch).not.toContain("bob@example.com");
+    expect(batch).not.toContain("4523");
+
+    expect(buildReviewContext(review)).toBe(`${stable}\n${batch}`);
+  });
+
+  it("says so when nothing has been signed off yet", () => {
+    expect(buildReviewStableContext({ ...review, history: [] })).toContain("(nothing signed off yet)");
   });
 });

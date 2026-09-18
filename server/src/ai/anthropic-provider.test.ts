@@ -66,7 +66,7 @@ describe("AnthropicProvider", () => {
     expect(out.meta).toMatchObject({
       provider: "anthropic",
       model: "claude-opus-5",
-      promptVersion: "transaction-classification-v3",
+      promptVersion: "transaction-classification-v4",
       inputTokens: 900,
       outputTokens: 120,
       cacheReadTokens: 4000,
@@ -118,5 +118,67 @@ describe("AnthropicProvider", () => {
 
     expect(out.results).toEqual([]);
     expect(out.failure).toMatchObject({ kind: "error", detail: "connection reset" });
+  });
+});
+
+describe("AnthropicProvider.reviewClassifications", () => {
+  const reviewInput = {
+    transactions: [
+      {
+        ref: "t1",
+        description: "adobe australia creative cloud",
+        amountCents: -110000,
+        date: "2026-07-01",
+        proposal: { accountCode: 470, accountName: "Subscriptions", gstTreatment: "GST_ON_EXPENSES" as const, confidence: 0.91, reason: "software", vendor: "Adobe", category: "Software subscription" },
+        proposedAccount: null,
+        classifierConcern: null,
+        firstSeen: true,
+      },
+    ],
+    client: input.client,
+    accounts: input.accounts,
+    memory: [],
+    history: [],
+  };
+
+  it("maps verdicts through sanitiseReview and stamps the review prompt version", async () => {
+    finalMessage.mockResolvedValue({
+      stop_reason: "end_turn",
+      usage,
+      parsed_output: {
+        results: [
+          // An AGREE that also suggests another account contradicts itself and must not clear.
+          { ref: "t1", verdict: "AGREE", confidence: 0.99, reason: "fine", suggestedAccountCode: 450, suggestedGstTreatment: null },
+        ],
+      },
+    });
+
+    const out = await provider().reviewClassifications(reviewInput);
+
+    expect(out.failure).toBeUndefined();
+    expect(out.results[0]).toMatchObject({ ref: "t1", verdict: "ESCALATE", suggestedAccountCode: null });
+    expect(out.meta).toMatchObject({ provider: "anthropic", promptVersion: "transaction-review-v1", cacheReadTokens: 4000 });
+  });
+
+  it("routes a refusal to a failure without reading the verdicts", async () => {
+    finalMessage.mockResolvedValue({
+      stop_reason: "refusal",
+      stop_details: { type: "refusal", category: "cyber", explanation: "declined" },
+      usage,
+      parsed_output: { results: [{ ref: "t1", verdict: "AGREE", confidence: 1, reason: "x", suggestedAccountCode: null, suggestedGstTreatment: null }] },
+    });
+
+    const out = await provider().reviewClassifications(reviewInput);
+
+    expect(out.results).toEqual([]);
+    expect(out.failure).toMatchObject({ kind: "refusal", detail: "declined" });
+  });
+
+  it("routes a null parsed_output and a transport error to a failure", async () => {
+    finalMessage.mockResolvedValue({ stop_reason: "end_turn", usage, parsed_output: null });
+    expect((await provider().reviewClassifications(reviewInput)).failure?.kind).toBe("invalid_output");
+
+    finalMessage.mockRejectedValue(new Error("connection reset"));
+    expect((await provider().reviewClassifications(reviewInput)).failure).toMatchObject({ kind: "error", detail: "connection reset" });
   });
 });

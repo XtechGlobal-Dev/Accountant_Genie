@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ClassificationInput, SubcontractorInput } from "./types";
+import type { ClassificationInput, ReviewInput, SubcontractorInput } from "./types";
 
 /**
  * The prompts and the request context, shared by every provider.
@@ -12,7 +12,8 @@ import type { ClassificationInput, SubcontractorInput } from "./types";
  * claim quietly false the first time one of them is edited.
  */
 
-export const PROMPT_VERSION = "transaction-classification-v3";
+export const PROMPT_VERSION = "transaction-classification-v4";
+export const REVIEW_PROMPT_VERSION = "transaction-review-v1";
 export const SUBCONTRACTOR_PROMPT_VERSION = "subcontractor-identification-v1";
 
 /**
@@ -52,7 +53,12 @@ function loadPrompt(file: string): string {
 
 /** Reads the versioned classification prompt. Throws if it is missing. */
 export function loadClassificationPrompt(): string {
-  return loadPrompt(join("transaction-classification", "v3.md"));
+  return loadPrompt(join("transaction-classification", "v4.md"));
+}
+
+/** Reads the versioned reviewer prompt. Throws if it is missing. */
+export function loadReviewPrompt(): string {
+  return loadPrompt(join("transaction-review", "v1.md"));
 }
 
 /** Reads the versioned subcontractor-identification prompt. Throws if it is missing. */
@@ -170,6 +176,82 @@ export function buildTransactionContext(input: ClassificationInput): string {
 /** The whole context as one block, for providers without a caching split. */
 export function buildContext(input: ClassificationInput): string {
   return [...stableLines(input), ...transactionLines(input)].join("\n");
+}
+
+/* -------------------------------------------------------------------------- */
+/* Review context                                                             */
+/* -------------------------------------------------------------------------- */
+
+const money = (cents: number) => (cents / 100).toFixed(2);
+
+/**
+ * What stays constant for a client across the review batches of one run: the
+ * same client, chart and memory the classifier saw, plus the signed-off
+ * history the classifier did not. Cached the same way.
+ */
+function reviewStableLines(input: ReviewInput): string[] {
+  return [
+    `## Client`,
+    `Industry: ${input.client.industry ?? "unknown"}`,
+    `Entity: ${input.client.entityType}`,
+    `GST registered: ${input.client.gstRegistered ? "yes" : "no"}`,
+    ``,
+    `## Chart of accounts`,
+    ...input.accounts.map(
+      (a) =>
+        `${a.code} | ${a.name} | ${a.type} | ${a.gstTreatment}${a.description ? ` | ${a.description}` : ""}`,
+    ),
+    ``,
+    input.memory.length
+      ? `## Coding memory (prior decisions by this firm)\n` +
+        input.memory.map((m) => `"${m.pattern}" -> ${m.accountCode} (${m.gstTreatment})`).join("\n")
+      : `## Coding memory\n(none yet)`,
+    ``,
+    `## Signed-off history for this client (most recent first: date | amount | narration | account | tax code)`,
+    ...(input.history.length
+      ? input.history.map((h) => `${h.date} | ${money(h.amountCents)} | ${maskDescription(h.description)} | ${h.accountCode} | ${h.gstTreatment}`)
+      : ["(nothing signed off yet)"]),
+    ``,
+  ];
+}
+
+/** The batch: each proposed coding with the evidence around it. Narrations are masked here. */
+function reviewTransactionLines(input: ReviewInput): string[] {
+  const lines: string[] = [`## Codings to review`];
+  for (const t of input.transactions) {
+    const extras: string[] = [];
+    if (t.feedCategory || t.feedSubcategory) {
+      extras.push(`category: ${[t.feedCategory, t.feedSubcategory].filter(Boolean).join("/")}`);
+    }
+    if (t.merchantCode) extras.push(`mcc: ${t.merchantCode}`);
+    const head = `${t.ref} | ${t.date} | ${money(t.amountCents)} | ${maskDescription(t.description)}`;
+    lines.push(extras.length ? `${head} | ${extras.join(" | ")}` : head);
+    lines.push(
+      `  proposed: ${t.proposal.accountCode} ${t.proposal.accountName} | ${t.proposal.gstTreatment} | confidence ${t.proposal.confidence.toFixed(2)} | "${t.proposal.reason}"`,
+    );
+    if (t.proposal.vendor || t.proposal.category) {
+      lines.push(`  read as: vendor ${t.proposal.vendor ?? "unknown"}; supply ${t.proposal.category ?? "unknown"}`);
+    }
+    if (t.proposedAccount) {
+      lines.push(`  new account proposed: "${t.proposedAccount.name}" | ${t.proposedAccount.type} | ${t.proposedAccount.gstTreatment}`);
+    }
+    if (t.classifierConcern) lines.push(`  classifier asked for a person: ${t.classifierConcern}`);
+    if (t.firstSeen) lines.push(`  first time this merchant is seen for the client`);
+  }
+  return lines;
+}
+
+export function buildReviewStableContext(input: ReviewInput): string {
+  return reviewStableLines(input).join("\n");
+}
+
+export function buildReviewTransactionContext(input: ReviewInput): string {
+  return reviewTransactionLines(input).join("\n");
+}
+
+/** The whole review context as one block, for providers without a caching split. */
+export function buildReviewContext(input: ReviewInput): string {
+  return [...reviewStableLines(input), ...reviewTransactionLines(input)].join("\n");
 }
 
 /* -------------------------------------------------------------------------- */

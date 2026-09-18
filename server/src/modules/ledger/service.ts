@@ -4,6 +4,7 @@ import { db, type DbClient } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
 import type { GstTreatment } from "@/shared/enums";
 import { snapshotGst } from "./snapshot";
+import { buildBankJournal, type BankAllocation } from "./journal-engine";
 import { financialYearOf, financialYearRange } from "@/server/au/fy";
 import { GST_RULES_VERSION } from "@/server/modules/tax-rules/catalogue";
 import * as clients from "@/server/modules/clients/repository";
@@ -240,15 +241,8 @@ export async function postJournal(
 /* Posting from a reconciled bank transaction                                 */
 /* -------------------------------------------------------------------------- */
 
-/** One side of a bank posting: an account, how much of the amount, and its treatment. */
-export interface BankAllocation {
-  accountId: string;
-  /** Magnitude, never signed. The allocations of one posting sum to the amount. */
-  cents: number;
-  gstTreatment: GstTreatment;
-  subcontractorId?: string | null | undefined;
-  description?: string | null | undefined;
-}
+/** The allocation shape lives with the journal engine; re-exported so callers keep one import. */
+export type { BankAllocation } from "./journal-engine";
 
 export interface BankPosting {
   clientId: string;
@@ -287,39 +281,19 @@ export async function postBankTransactionInTx(
   userId: string,
   posting: BankPosting,
 ): Promise<string> {
-  const magnitude = Math.abs(posting.amountCents);
-  if (magnitude === 0) throw new Error("A zero-value transaction cannot be posted");
-  if (posting.allocations.length === 0) throw new Error("A bank posting needs at least one allocation");
-  const allocated = posting.allocations.reduce((sum, a) => sum + a.cents, 0);
-  if (allocated !== magnitude) {
-    throw new Error(`Allocations (${allocated}) do not sum to the transaction amount (${magnitude})`);
-  }
-  if (posting.allocations.some((a) => !Number.isInteger(a.cents) || a.cents < 0)) {
-    throw new Error("An allocation must be a non-negative whole number of cents");
-  }
-  const moneyOut = posting.amountCents < 0;
-
-  const codedLines = posting.allocations
-    .filter((a) => a.cents > 0)
-    .map((a) => {
-      const debitCents = moneyOut ? a.cents : 0;
-      const creditCents = moneyOut ? 0 : a.cents;
-      return {
-        accountId: a.accountId,
-        description: a.description ?? null,
-        debitCents,
-        creditCents,
-        ...snapshotGst({
-          source: "BANK",
-          accountTreatment: a.gstTreatment,
-          debitCents,
-          creditCents,
-          gstRegistered: posting.gstRegistered,
-        }),
-        subcontractorId: a.subcontractorId ?? null,
-        bankTransactionId: posting.bankTransactionId,
-      };
-    });
+  // The journal engine builds and validates the lines; this function only
+  // writes them. The same engine ran as a dry run when the row was coded, so
+  // a failure here means the row changed between coding and acceptance.
+  const journal = buildBankJournal({
+    amountCents: posting.amountCents,
+    gstRegistered: posting.gstRegistered,
+    bankLedgerAccountId: posting.bankLedgerAccountId,
+    allocations: posting.allocations,
+    bankTransactionId: posting.bankTransactionId,
+  });
+  if (!journal.ok) throw new Error(journal.error);
+  const magnitude = journal.totalCents;
+  const codedLines = journal.lines.filter((line) => line.accountId !== posting.bankLedgerAccountId);
 
   const entry = await repo.createEntry(tx, {
     clientId: posting.clientId,
@@ -330,20 +304,7 @@ export async function postBankTransactionInTx(
     totalCents: magnitude,
     postedById: userId,
     rulesVersion: GST_RULES_VERSION,
-    lines: {
-      create: [
-        ...codedLines,
-        {
-          accountId: posting.bankLedgerAccountId,
-          description: null,
-          debitCents: moneyOut ? 0 : magnitude,
-          creditCents: moneyOut ? magnitude : 0,
-          gstCents: 0,
-          gstTreatment: "BAS_EXCLUDED",
-          bankTransactionId: posting.bankTransactionId,
-        },
-      ],
-    },
+    lines: { create: journal.lines },
   });
 
   await recordAudit(tx, {

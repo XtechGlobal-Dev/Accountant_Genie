@@ -1,10 +1,12 @@
 import "server-only";
 
-import { db } from "@/server/core/db";
+import { db, type DbClient } from "@/server/core/db";
 import { recordAudit } from "@/server/core/audit";
 import { GST_TREATMENT_LABELS, basLabelsFor, isGstBearing } from "@/server/au/gst";
 import * as clients from "@/server/modules/clients/repository";
 import type { AccountType } from "@/shared/enums";
+import { CREATABLE_ACCOUNT_TYPES, treatmentAllowedFor } from "@/shared/account-rules";
+import { findSimilarAccount, nextCustomCode, type AccountProposal, type ResolvableAccount } from "./resolver";
 import type { ActionResult } from "@/shared/contracts/result";
 import type {
   AccountOption,
@@ -403,4 +405,119 @@ export async function setCustomAccountActive(
   });
 
   return { ok: true, id: existing.id };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Accounts proposed by the classifier                                        */
+/* -------------------------------------------------------------------------- */
+
+export interface ProposalLineage {
+  /** The bank transaction whose classification proposed the account. */
+  bankTransactionId: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  reason: string;
+  confidence: number;
+}
+
+export type ProposalOutcome =
+  | { ok: true; account: ResolvableAccount; created: boolean; matchedScore: number | null }
+  | { ok: false; error: string };
+
+/**
+ * Turn an AI account proposal into an account id, on the caller's transaction.
+ *
+ * The model has said "nothing in the chart holds this supply; it is a
+ * <name> of type <type> with <treatment>". This is where the backend decides
+ * — the model decides nothing here:
+ *
+ *   1. Is the proposal well-formed? A type that cannot be created, or a
+ *      treatment the type cannot carry, is refused.
+ *   2. Does the chart already have it? The resolver's similarity match runs
+ *      over every account the client can post to, including ones created
+ *      earlier in the same run. A hit is reused, and nothing is created.
+ *   3. Otherwise allocate the next free code in the type's band and create
+ *      the account FIRM-WIDE, so the next client with the same kind of
+ *      expense reuses it, flagged for the advisor because its treatment has
+ *      not been signed off by a person.
+ *
+ * The audit row records the transaction, provider, model and prompt that
+ * proposed it, so "where did this account come from?" has an answer.
+ */
+export async function resolveProposedAccountInTx(
+  tx: DbClient,
+  firmId: string,
+  userId: string | null,
+  proposal: AccountProposal,
+  visible: readonly ResolvableAccount[],
+  lineage: ProposalLineage,
+): Promise<ProposalOutcome> {
+  const name = proposal.name.trim().replace(/\s+/g, " ").slice(0, 120);
+  if (name.length < 2) return { ok: false, error: "The proposed account has no name" };
+  if (!CREATABLE_ACCOUNT_TYPES.includes(proposal.type)) {
+    return { ok: false, error: `${proposal.type} accounts cannot be created` };
+  }
+  if (proposal.gstTreatment === "UNALLOCATED" || !treatmentAllowedFor(proposal.type, proposal.gstTreatment)) {
+    return { ok: false, error: `${GST_TREATMENT_LABELS[proposal.gstTreatment]} does not apply to a ${ACCOUNT_TYPE_LABELS[proposal.type].toLowerCase()} account` };
+  }
+
+  const similar = findSimilarAccount(visible, { ...proposal, name });
+  if (similar) return { ok: true, account: similar.account, created: false, matchedScore: similar.score };
+
+  // Two runs for the same firm at once — an import and a re-code, two
+  // imports for two clients — would each find nothing and each create the
+  // account, under different codes. Take the firm's row lock so creation is
+  // serialised per firm, then look again at what is there NOW rather than
+  // at the chart the caller read before its transaction began.
+  await tx.$executeRaw`SELECT 1 FROM "Firm" WHERE "id" = ${firmId} FOR UPDATE`;
+  const fresh = await repo.listFirmWideAccounts(tx, firmId, proposal.type);
+  const nowSimilar = findSimilarAccount(fresh, { ...proposal, name });
+  if (nowSimilar) return { ok: true, account: nowSimilar.account, created: false, matchedScore: nowSimilar.score };
+
+  const code = nextCustomCode(await repo.listTakenCodes(tx, firmId), proposal.type);
+  if (code === null) return { ok: false, error: `No free ${ACCOUNT_TYPE_LABELS[proposal.type].toLowerCase()} code is left in the custom range` };
+
+  const created = await repo.createAccount(tx, {
+    firmId,
+    clientId: null,
+    code,
+    name,
+    type: proposal.type,
+    gstTreatment: proposal.gstTreatment,
+    description: `Created from transaction classification (${lineage.reason.slice(0, 160)})`,
+    isSystem: false,
+    requiresVerification: true,
+    taxNote:
+      "CREATED FROM AN AI PROPOSAL during a statement import. The type and default tax treatment are the classifier's; nobody has confirmed them. Review the name for duplication and the treatment for correctness, then clear this flag.",
+  });
+  await recordAudit(tx, {
+    firmId,
+    userId,
+    clientId: null,
+    action: "ACCOUNT_CREATED",
+    entityType: "Account",
+    entityId: created.id,
+    after: {
+      code,
+      name,
+      type: proposal.type,
+      gstTreatment: proposal.gstTreatment,
+      clientId: null,
+      source: "AI_PROPOSAL",
+      bankTransactionId: lineage.bankTransactionId,
+      provider: lineage.provider,
+      model: lineage.model,
+      promptVersion: lineage.promptVersion,
+      confidence: lineage.confidence,
+      reason: lineage.reason,
+    },
+  });
+
+  return {
+    ok: true,
+    created: true,
+    matchedScore: null,
+    account: { id: created.id, code, name, type: proposal.type, gstTreatment: proposal.gstTreatment, description: null },
+  };
 }
