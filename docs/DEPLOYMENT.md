@@ -43,10 +43,17 @@ halves on Render also puts the queue on the private network: `ipAllowList` is em
 Redis connection string is never exposed to the internet. See §7 for what this costs.
 
 **Running on Vercel instead.** There is no worker there and no process that outlives a
-response, so `server/src/jobs/queue.ts` takes its third route: it POSTs the job id to
-`/api/jobs/run`, which answers immediately and finishes the job under `after()` with its own
-`maxDuration` (300s — the Hobby ceiling and the Pro default). Nothing has to be configured for
-this: the target is `VERCEL_URL` and the call is signed with `AUTH_SECRET`. Two things to know.
+response, so `server/src/jobs/queue.ts` finishes the job under `after()` on the invocation that
+enqueued it. That crosses no network, so it meets no Deployment Protection and needs no
+configuration at all. If `after()` has no request to attach to it falls back to POSTing the job
+id to `/api/jobs/run` — which does cross the network, so a protected deployment answers the
+self-call with an SSO redirect and the route is never reached; `VERCEL_AUTOMATION_BYPASS_SECRET`
+is what gets through that. Three things to know.
+
+- **Check Project Settings → Functions → Function Max Duration.** Under `after()` the job shares
+  the calling route's budget. Vercel's default with Fluid compute is 300s, which is what the
+  numbers below assume; a project left at 10s or 15s cuts the coding stage off mid-file, and no
+  change in this repository can lift it.
 
 - **`S3_BUCKET` is not optional on Vercel.** The upload and the job that reads the file back are
   now separate invocations, and `getStorage()` refuses local disk in production for exactly this

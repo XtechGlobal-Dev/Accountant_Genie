@@ -12,8 +12,10 @@ import { HANDLERS, type JobType } from "./handlers";
  * this order:
  *
  *   BullMQ      `REDIS_URL` is set and a worker is running (`npm run worker`).
- *   HTTP        A serverless host — Vercel — where a background timer does
- *               not survive the response. See `runnerUrl` below.
+ *   after()     A serverless host — Vercel — where a background timer does
+ *               not survive the response, but `after()` does. See `runAfterResponse`.
+ *   HTTP        The same host, when there is no request to hang `after()` on:
+ *               a hand-off to a route that runs the job. See `runnerUrl`.
  *   In-process  A timer on the next tick. The local default: one long-lived
  *               `next dev` process, no infrastructure, the same stage events.
  *
@@ -135,11 +137,16 @@ export function jobRunnerSecret(): string | null {
  * own window) and died in "Coding transactions", which is a minute or more
  * of AI calls. Observed, not theorised.
  *
- * The fix is to give the job an invocation of its own: POST to a route that
- * answers immediately and finishes the work under `after()`, with its own
- * `maxDuration`. `VERCEL_URL` is this exact deployment, so the job runs the
- * same code that enqueued it; `JOB_RUNNER_URL` overrides for a host that
- * needs one (a stable domain, a preview that cannot self-call).
+ * The second answer, when `after()` has no request to attach to: POST to a
+ * route that answers immediately and runs the job with its own `maxDuration`.
+ * `VERCEL_URL` is this exact deployment, so the job runs the same code that
+ * enqueued it; `JOB_RUNNER_URL` overrides for a host that needs one.
+ *
+ * This route crosses the public network, so Deployment Protection applies to
+ * it — a protected deployment answers the self-call with an SSO redirect or a
+ * 401 and the route is never reached. `VERCEL_AUTOMATION_BYPASS_SECRET` is
+ * what gets through it. `after()` above needs none of that, which is why it
+ * is tried first.
  *
  * Null on a long-lived host, which is what selects the in-process timer.
  */
@@ -148,6 +155,48 @@ function runnerUrl(): string | null {
   const host = process.env.VERCEL_URL?.trim() || process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
   const base = explicit || (host ? `https://${host}` : null);
   return base ? `${base.replace(/\/+$/, "")}/api/jobs/run` : null;
+}
+
+/** Is this a host whose process stops when the response does? */
+function isServerless(): boolean {
+  return Boolean(process.env.VERCEL?.trim() || process.env.JOB_RUNNER_URL?.trim());
+}
+
+/**
+ * Finish the job on THIS invocation, after its response has been sent.
+ *
+ * `after()` is the one hand-off on Vercel that crosses no network and so
+ * meets no Deployment Protection: the platform simply keeps the invocation
+ * alive for the callback. The import that enqueues the job is already inside
+ * a request, which is the only thing `after()` needs.
+ *
+ * The import is dynamic so that `next` is never in this module's static graph
+ * — `scripts/worker.ts` runs it under tsx, outside Next entirely, and only a
+ * serverless host ever reaches this branch. `after()` THROWS outside a
+ * request scope rather than dropping the callback, so a false negative here
+ * costs a fallback and never a lost job.
+ *
+ * The job shares the calling route's time budget. Vercel's default is 300s
+ * with Fluid compute, which the upload has barely touched by this point; a
+ * project configured lower cuts the coding stage short, and the fix is the
+ * project's Function Max Duration, not this file.
+ */
+async function runAfterResponse(jobId: string, delayMs: number): Promise<boolean> {
+  try {
+    const { after } = await import("next/server");
+    after(async () => {
+      try {
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await runJob(jobId);
+      } catch (error) {
+        if ((error as { code?: string })?.code === "P2025") return;
+        console.error(`[jobs] ${jobId} crashed`, error);
+      }
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A job that could not be handed to a runner at all. Visible, not silent. */
@@ -169,8 +218,15 @@ async function dispatch(jobId: string, delayMs: number): Promise<void> {
     return;
   }
 
-  const url = runnerUrl();
-  if (url) {
+  if (isServerless()) {
+    // The invocation that is already running is the cheapest runner there is.
+    if (await runAfterResponse(jobId, delayMs)) return;
+
+    const url = runnerUrl();
+    if (!url) {
+      await markUndispatchable(jobId, "This host ends a process with its response and no job runner URL is configured");
+      return;
+    }
     const secret = jobRunnerSecret();
     if (!secret) {
       await markUndispatchable(jobId, "Neither JOB_RUNNER_SECRET nor AUTH_SECRET is set, so this host cannot start a job");
@@ -185,6 +241,10 @@ async function dispatch(jobId: string, delayMs: number): Promise<void> {
       const response = await fetch(url, {
         method: "POST",
         cache: "no-store",
+        // Deployment Protection answers with a 302 to an SSO page that itself
+        // returns 200. Followed, that would read as a successful hand-off to
+        // a route that was never reached — so the redirect is the answer.
+        redirect: "manual",
         headers: {
           "content-type": "application/json",
           "x-job-secret": secret,
@@ -193,7 +253,13 @@ async function dispatch(jobId: string, delayMs: number): Promise<void> {
         body: JSON.stringify({ jobId, delayMs }),
       });
       if (!response.ok) {
-        await markUndispatchable(jobId, `The job runner at ${url} answered ${response.status}`);
+        const protection = response.status === 401 || response.status === 403 || response.status === 302;
+        await markUndispatchable(
+          jobId,
+          protection
+            ? `The job runner at ${url} answered ${response.status} — the deployment is behind Vercel Deployment Protection. Set VERCEL_AUTOMATION_BYPASS_SECRET, or point JOB_RUNNER_URL at an unprotected domain`
+            : `The job runner at ${url} answered ${response.status}`,
+        );
       }
     } catch (error) {
       await markUndispatchable(jobId, `The job runner at ${url} could not be reached: ${error instanceof Error ? error.message : String(error)}`);
