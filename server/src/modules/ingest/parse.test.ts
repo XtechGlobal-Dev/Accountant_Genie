@@ -122,6 +122,85 @@ describe("parseStatementCsv", () => {
     ]);
   });
 
+  it("finds the header below a bank's letterhead, codes from the description not the reference, and skips the footer", () => {
+    // The shape a "business bank statement" export takes: preamble, a
+    // summary row that itself mentions Money in / Money out, the real
+    // header, the lines, then a reconciliation note and a page footer.
+    const statement = [
+      "SOUTHERN CROSS,,,BUSINESS BANK STATEMENT,,",
+      "Account holder,Singh Kitchen Pty Ltd,Statement period,1 September 2026 to 30 September 2026,,",
+      "BSB / account,000-000 / XXXX 4821,Currency,AUD,,",
+      "Opening balance,Money in,Money out,Closing balance,Transaction count,",
+      '"$25,000.00","$11,000.00","$18,810.00","$17,190.00",,5',
+      "Date,Reference,Transaction description,Money in,Money out,Balance",
+      '02-Sep-26,EFT-0902,EFTPOS settlement - restaurant sales,"$11,000.00",,"$36,000.00"',
+      '04-Sep-26,SUP-0904,Greenfield Produce Markets - GST-free ingredients,,"$2,200.00","$33,800.00"',
+      '10-Sep-26,CAPEX-0910,Precision Kitchen Systems - commercial oven,,"$11,000.00","$17,300.00"',
+      '"Reconciliation: $25,000.00 + $11,000.00 - $18,810.00 = $17,190.00.",,,,,',
+      "SAMPLE / FICTIONAL - Singh Kitchen,,,,,Page 1",
+    ].join("\n");
+    const result = parseStatementCsv(statement);
+    expect(result.failed).toEqual([]);
+    expect(result.columns).toMatchObject({ date: "Date", description: "Transaction description", credit: "Money in", debit: "Money out", balance: "Balance" });
+    expect(result.rows.map((r) => [r.date.toISOString().slice(0, 10), r.amountCents, r.description, r.balanceCents])).toEqual([
+      ["2026-09-02", 1_100_000, "EFTPOS settlement - restaurant sales", 3_600_000],
+      ["2026-09-04", -220_000, "Greenfield Produce Markets - GST-free ingredients", 3_380_000],
+      ["2026-09-10", -1_100_000, "Precision Kitchen Systems - commercial oven", 1_730_000],
+    ]);
+    // Five letterhead rows above the header, two note rows below the data.
+    expect(result.skipped).toBe(7);
+    // Row indexes still point at the file, for the failed-rows report.
+    expect(result.rows[0]?.index).toBe(6);
+  });
+
+  it("reads snake_case headers as the words they are, and ignores the extra columns a test fixture carries", () => {
+    // A fixture written by software: underscored headers, month-name dates,
+    // plain numbers, and expectation columns after the statement columns.
+    const fixture = [
+      "line_number,date,reference,description,money_in,money_out,running_balance,expected_account,expected_bas_gst,sample_flag",
+      "1,02 Oct 2026,EFT-1002,EFTPOS settlement - sales net of merchant fee,54450.00,,129450.00,Sales clearing / Business Bank,G1 and 1A from POS report,FICTIONAL",
+      '2,04 Oct 2026,SUP-1004,Greenfield Produce Markets - basic ingredients,,4400.00,125050.00,Food Purchases - GST-free Ingredients,"G11 $4,400; GST credit nil",FICTIONAL',
+      '3,09 Oct 2026,PAY-1009,Payroll batch - fortnight net wages,,22000.00,96850.00,Wages and PAYG Withholding Payable,"W1/W2 from payroll register; not G10/G11",FICTIONAL',
+    ].join("\n");
+    const result = parseStatementCsv(fixture);
+    expect(result.failed).toEqual([]);
+    expect(result.columns).toMatchObject({ date: "date", description: "description", credit: "money_in", debit: "money_out", balance: "running_balance" });
+    expect(result.rows.map((r) => [r.date.toISOString().slice(0, 10), r.amountCents, r.description, r.balanceCents])).toEqual([
+      ["2026-10-02", 5_445_000, "EFTPOS settlement - sales net of merchant fee", 12_945_000],
+      ["2026-10-04", -440_000, "Greenfield Produce Markets - basic ingredients", 12_505_000],
+      ["2026-10-09", -2_200_000, "Payroll batch - fortnight net wages", 9_685_000],
+    ]);
+    expect(detectColumns(["Date", "Money-In", "Money-Out", "Description"])).toMatchObject({ credit: "Money-In", debit: "Money-Out" });
+  });
+
+  it("ignores a currency tag on an amount or balance header", () => {
+    expect(detectColumns(["Date", "Description", "Amount (AUD)", "Balance (AUD)"])).toMatchObject({ amount: "Amount (AUD)", balance: "Balance (AUD)" });
+    expect(detectColumns(["Date", "Description", "Amount AUD", "Balance $"])).toMatchObject({ amount: "Amount AUD", balance: "Balance $" });
+    // A loan statement that shows principal and interest as separate lines.
+    const result = parseStatementCsv([
+      "Date,Description,Amount (AUD),Balance (AUD)",
+      "17/09/2026,LOAN PRINCIPAL REPAYMENT,-2000.0,9000.0",
+      "17/09/2026,INTEREST ON BUSINESS LOAN,-300.0,8700.0",
+    ].join("\n"));
+    expect(result.failed).toEqual([]);
+    expect(result.rows.map((r) => [r.amountCents, r.balanceCents, r.description])).toEqual([
+      [-200_000, 900_000, "LOAN PRINCIPAL REPAYMENT"],
+      [-30_000, 870_000, "INTEREST ON BUSINESS LOAN"],
+    ]);
+  });
+
+  it("falls back to a Reference column only when nothing names the description", () => {
+    expect(detectColumns(["Date", "Reference", "Amount"])?.description).toBe("Reference");
+    expect(detectColumns(["Date", "Reference", "Transaction description", "Amount"])?.description).toBe("Transaction description");
+  });
+
+  it("still reports a row with an amount but no readable date", () => {
+    const result = parseStatementCsv(["Date,Description,Amount", "32/13/2026,Impossible,-10.00", "01/07/2026,Fine,-5.00"].join("\n"));
+    expect(result.rows).toHaveLength(1);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.reason).toMatch(/Unreadable date/);
+  });
+
   it("fails clearly when the header has no usable columns", () => {
     const result = parseStatementCsv("Foo,Bar\n1,2");
     expect(result.rows).toEqual([]);
