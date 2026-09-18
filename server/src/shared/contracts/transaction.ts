@@ -90,6 +90,17 @@ export interface ReconcileStats {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; calls: number };
   /** Things an operator should know: a missed pre-AI target, a cold cache. */
   warnings: string[];
+  /** Accounts the run created from AI proposals, after the resolver found nothing equivalent. */
+  accountsCreated: { code: number; name: string }[];
+  /** Why rows went to review, most common first — so the upload dialog can say, not just count. */
+  reviewReasons: { reason: string; count: number }[];
+  /**
+   * The AI reviewer's pass over the classifier's codings. `checked` rows got
+   * a verdict; `cleared` is how many an AGREE moved to Ready that would
+   * otherwise have waited for a person. `failure` is set when the reviewer
+   * declined or failed, in which case the rows kept the classifier's routing.
+   */
+  reviewer: { checked: number; agreed: number; disagreed: number; escalated: number; cleared: number; failure: string | null };
 }
 
 export interface ImportOutcome {

@@ -347,11 +347,17 @@ unauthenticated payload.
   public token page, feed connections via a provider interface with a **Fiskil** implementation
   (CDR consents, auth sessions + Link SDK, live accounts and balances, webhook-driven sync),
   feed sync job), `ingest` (CSV and PDF parsing, dedup by fingerprint, stored original, job
-  stages), `reconcile` (memory → rules → AI with validation gate, risk, review, Coding Memory; a
-    live feed's own category rides along to the AI tier as weak corroborating evidence
-    under `prompts/transaction-classification/v2.md`, and a recode of a fed transaction
+  stages), `reconcile` (memory → rules → AI with validation gate → **AI reviewer** → risk, review,
+    Coding Memory; a live feed's own category rides along to the AI tier as weak corroborating
+    evidence under `prompts/transaction-classification/v4.md`, and a recode of a fed transaction
     is pushed back to Fiskil by `banking/category-feedback.ts` — only ever as a category
-    Fiskil itself supplied, since their taxonomy is unpublished),
+    Fiskil itself supplied, since their taxonomy is unpublished. The reviewer is a second call
+    under `prompts/transaction-review/v1.md` with the client's signed-off history: its confident
+    AGREE clears the classifier's confidence gap, a first-time merchant and a newly created
+    account so the row is Ready; its DISAGREE or ESCALATE sends even a confident coding to a
+    person; it never clears a large amount, a balance-sheet posting, a contradiction of a
+    person's earlier decision or a journal that will not balance — `reconcile/reviewer.ts` and
+    `docs/AI-PIPELINE.md` Part 5),
   `accounts` (system + custom chart, CSV export, tax-agent verification of flagged
   treatments), `ledger`, `reports` (P&L, Balance Sheet, Trial Balance, General Ledger,
   Transactions, Simple BAS with lineage, TPAR, Depreciation, EOFY; Xero CSV and MYOB TXT

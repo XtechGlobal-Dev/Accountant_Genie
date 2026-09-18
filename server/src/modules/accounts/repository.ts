@@ -1,7 +1,7 @@
 import "server-only";
 
 import { db, type DbClient } from "@/server/core/db";
-import type { Prisma } from "@/generated/prisma";
+import type { AccountType, Prisma } from "@/generated/prisma";
 
 /**
  * The chart of accounts a firm can see: system accounts (`firmId` null), the
@@ -174,6 +174,28 @@ export function upsertVerification(
 
 export function createAccount(tx: DbClient, data: Prisma.AccountUncheckedCreateInput) {
   return tx.account.create({ data, select: { id: true } });
+}
+
+/**
+ * Every code the firm can see — system, firm-wide and every client's own —
+ * for allocating the next one. The chart is one namespace to the person
+ * reading it, so a new firm-wide account never reuses a number a client
+ * chart already shows.
+ */
+/** The firm's own firm-wide accounts of one type, read on the caller's transaction — for the resolver's re-check under the firm lock. */
+export function listFirmWideAccounts(tx: DbClient, firmId: string, type: AccountType) {
+  return tx.account.findMany({
+    where: { firmId, clientId: null, type, isActive: true },
+    select: { id: true, code: true, name: true, type: true, gstTreatment: true, description: true },
+  });
+}
+
+export async function listTakenCodes(tx: DbClient, firmId: string): Promise<number[]> {
+  const rows = await tx.account.findMany({
+    where: { OR: [{ firmId: null, clientId: null }, { firmId }] },
+    select: { code: true },
+  });
+  return rows.map((r) => r.code);
 }
 
 /**

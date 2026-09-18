@@ -23,6 +23,7 @@ import type {
   TransactionRow,
 } from "@/shared/contracts/transaction";
 import { runEngine } from "./engine";
+import { vendorKey } from "./vendor";
 import * as repo from "./repository";
 import type { ExcludeInput, MemoryRuleUpdateInput, RecodeInput } from "./schema";
 import { shareCategoryCorrection } from "@/server/modules/banking/category-feedback";
@@ -442,6 +443,54 @@ export async function acceptTransactions(
         bankTransactionId: t.id,
       });
       await tx.bankTransaction.update({ where: { id: t.id }, data: { journalEntryId: entryId }, select: { id: true } });
+
+      // Learning. A person has just confirmed a coding the AI proposed — the
+      // one case no rule and no memory produced. Remember the supplier for
+      // this client, so the next narration from it resolves in the memory
+      // tier before any AI call. A recode carries its own "remember" choice
+      // and a rule or memory hit already is the firm's policy, so neither
+      // learns here. A rule that already exists and points elsewhere is
+      // left alone: a person's earlier decision is never overwritten by an
+      // acceptance, and the review page keeps showing the disagreement.
+      if (t.source === "AI" && !isLoanRepayment) {
+        const key = vendorKey(t.normalised);
+        const pattern = key ?? t.normalised;
+        const matchType = key ? "CONTAINS" : "EXACT";
+        const existing = await repo.findMemoryRuleByPattern(firmId, clientId, pattern);
+        if (!existing) {
+          const rule = await repo.createMemoryRule(tx, {
+            firmId,
+            clientId,
+            pattern,
+            matchType,
+            accountId,
+            gstTreatment,
+            createdById: userId,
+          });
+          await tx.bankTransaction.update({ where: { id: t.id }, data: { memoryRuleId: rule.id }, select: { id: true } });
+          await recordAudit(tx, {
+            firmId,
+            userId,
+            clientId,
+            action: "MEMORY_CREATED",
+            entityType: "MemoryRule",
+            entityId: rule.id,
+            after: { pattern, matchType, accountId, gstTreatment, scope: "CLIENT", learnedFrom: "ACCEPT", bankTransactionId: t.id },
+          });
+        } else if (existing.accountId === accountId && existing.gstTreatment === gstTreatment) {
+          await repo.updateMemoryRule(tx, existing.id, { evidenceCount: { increment: 1 }, lastUsedAt: new Date() });
+          await recordAudit(tx, {
+            firmId,
+            userId,
+            clientId,
+            action: "MEMORY_UPDATED",
+            entityType: "MemoryRule",
+            entityId: existing.id,
+            after: { pattern, evidence: "increment", learnedFrom: "ACCEPT", bankTransactionId: t.id },
+          });
+        }
+      }
+
       // Metering: one reconciled transaction. The key makes a re-acceptance
       // after a reopen count once, not twice.
       await tx.usageEvent.createMany({

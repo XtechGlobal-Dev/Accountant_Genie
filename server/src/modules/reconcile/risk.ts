@@ -29,18 +29,41 @@ export interface RiskInput {
   accountType: AccountType;
 }
 
+export type RiskFactor = "AMOUNT" | "CAPITAL" | "BALANCE_SHEET" | "INCONSISTENT" | "NOVEL";
+
+/**
+ * The first factor that makes a decision high risk, or null when none does.
+ * The order is the order of the checks in `scoreRisk`; the level is derived
+ * from this so the two can never disagree.
+ */
+export function riskFactor(
+  input: RiskInput,
+  config: Pick<ReconcileConfig, "highRiskCents" | "noveltyRiskCents">,
+): RiskFactor | null {
+  if (Math.abs(input.amountCents) >= config.highRiskCents) return "AMOUNT";
+  // Capital, equity and liability postings change the balance sheet, not
+  // just the period's expenses; a mistake there survives the year end.
+  if (input.gstTreatment === "GST_ON_CAPITAL" || input.gstTreatment === "GST_FREE_CAPITAL") {
+    return "CAPITAL";
+  }
+  if (input.accountType === "EQUITY" || input.accountType === "LIABILITY") return "BALANCE_SHEET";
+  if (input.inconsistent) return "INCONSISTENT";
+  if (input.novel && Math.abs(input.amountCents) >= config.noveltyRiskCents) return "NOVEL";
+  return null;
+}
+
 export function scoreRisk(
   input: RiskInput,
   config: Pick<ReconcileConfig, "highRiskCents" | "noveltyRiskCents">,
 ): RiskLevel {
-  if (Math.abs(input.amountCents) >= config.highRiskCents) return "HIGH";
-  // Capital, equity and liability postings change the balance sheet, not
-  // just the period's expenses; a mistake there survives the year end.
-  if (input.gstTreatment === "GST_ON_CAPITAL" || input.gstTreatment === "GST_FREE_CAPITAL") {
-    return "HIGH";
-  }
-  if (input.accountType === "EQUITY" || input.accountType === "LIABILITY") return "HIGH";
-  if (input.inconsistent) return "HIGH";
-  if (input.novel && Math.abs(input.amountCents) >= config.noveltyRiskCents) return "HIGH";
-  return "LOW";
+  return riskFactor(input, config) === null ? "LOW" : "HIGH";
 }
+
+/** What a reviewer is told about a high-risk factor. */
+export const RISK_FACTOR_REASONS: Record<RiskFactor, string> = {
+  AMOUNT: "Large amount",
+  CAPITAL: "Capital purchase — affects the balance sheet",
+  BALANCE_SHEET: "Posts to a balance sheet account",
+  INCONSISTENT: "Coded differently by a person before",
+  NOVEL: "First time this supplier has been seen for the client",
+};

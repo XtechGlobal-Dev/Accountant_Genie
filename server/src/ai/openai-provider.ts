@@ -2,23 +2,30 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import {
   PROMPT_VERSION,
+  REVIEW_PROMPT_VERSION,
   SUBCONTRACTOR_PROMPT_VERSION,
   buildContext,
+  buildReviewContext,
   buildSubcontractorContext,
   hashInput,
   loadClassificationPrompt,
+  loadReviewPrompt,
   loadSubcontractorPrompt,
 } from "./prompt";
 import {
   ClassificationBatchSchema,
+  ReviewBatchSchema,
   SubcontractorBatchSchema,
   sanitiseResult,
+  sanitiseReview,
   sanitiseSubcontractor,
   type AccountingAIProvider,
   type ClassificationInput,
   type ClassificationResponse,
   type ProviderFailure,
   type ProviderMeta,
+  type ReviewInput,
+  type ReviewResponse,
   type SubcontractorInput,
   type SubcontractorResponse,
 } from "./types";
@@ -72,6 +79,35 @@ export class OpenAIProvider implements AccountingAIProvider {
       if (failure) return { results: [], meta, failure };
 
       return { results: response.output_parsed!.results.map(sanitiseResult), meta };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { results: [], meta, failure: { kind: "error", detail } };
+    }
+  }
+
+  async reviewClassifications(input: ReviewInput): Promise<ReviewResponse> {
+    const meta: ProviderMeta = { provider: this.name, model: this.model, promptVersion: REVIEW_PROMPT_VERSION };
+    try {
+      const systemPrompt = loadReviewPrompt();
+      const context = buildReviewContext(input);
+      meta.inputHash = hashInput(systemPrompt, context);
+
+      const response = await this.client.responses.parse({
+        model: this.model,
+        input: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: context },
+        ],
+        text: { format: zodTextFormat(ReviewBatchSchema, "review_batch") },
+      });
+
+      meta.inputTokens = response.usage?.input_tokens;
+      meta.outputTokens = response.usage?.output_tokens;
+
+      const failure = failureOf(response);
+      if (failure) return { results: [], meta, failure };
+
+      return { results: response.output_parsed!.results.map(sanitiseReview), meta };
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       return { results: [], meta, failure: { kind: "error", detail } };

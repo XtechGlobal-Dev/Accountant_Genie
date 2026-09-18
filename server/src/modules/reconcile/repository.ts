@@ -84,6 +84,9 @@ export function listForEngine(firmId: string, clientId: string, ids?: readonly s
       feedCategory: true,
       feedSubcategory: true,
       feedMerchantCode: true,
+      // Which ledger account stands for the bank, so the engine can build the
+      // journal a coding would post as a dry run before calling it Ready.
+      bankAccount: { select: { kind: true } },
     },
   });
 }
@@ -221,6 +224,27 @@ export async function reviewedCodings(firmId: string, clientId: string): Promise
   return map;
 }
 
+/**
+ * The signed-off history the AI reviewer reads: the most recent transactions
+ * a person accepted for this client, with the account each went to. This is
+ * the reviewer's strongest evidence — how this firm actually codes this
+ * client — and the classifier never sees it.
+ */
+export function recentReviewedHistory(firmId: string, clientId: string, take = 40) {
+  return db.bankTransaction.findMany({
+    where: { ...owned(firmId, clientId), status: "REVIEWED", excludedAt: null, accountId: { not: null }, gstTreatment: { not: null } },
+    orderBy: [{ reviewedAt: "desc" }, { date: "desc" }],
+    take,
+    select: {
+      date: true,
+      description: true,
+      amountCents: true,
+      gstTreatment: true,
+      account: { select: { code: true } },
+    },
+  });
+}
+
 /** A system ledger account by code: the bank side of a posting, or the interest account a loan split needs. */
 export function findSystemAccountByCode(code: number) {
   return db.account.findFirst({
@@ -277,7 +301,7 @@ export function findOwnedMemoryRule(firmId: string, ruleId: string) {
 export function findMemoryRuleByPattern(firmId: string, clientId: string | null, pattern: string) {
   return db.memoryRule.findFirst({
     where: { firmId, clientId, pattern },
-    select: { id: true },
+    select: { id: true, accountId: true, gstTreatment: true },
   });
 }
 
