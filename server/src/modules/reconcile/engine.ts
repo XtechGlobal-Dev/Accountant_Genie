@@ -135,12 +135,33 @@ function unknownDecision(unknown: VisibleAccount, reasoning: string, source: Cla
   };
 }
 
+/**
+ * Called as the coding stage advances, so a job that is working looks
+ * different from one whose process died. Two AI calls over one statement are
+ * a minute or more of silence otherwise, and the Activity Panel cannot tell
+ * that apart from a hang — which is exactly what was reported.
+ *
+ * Reporting is never allowed to break a run: a failed progress write is
+ * swallowed, because the coding is the work and the event is the commentary.
+ */
+export type ReconcileProgress = (processed: number, total: number, note?: string) => Promise<void>;
+
 export async function runEngine(
   firmId: string,
   userId: string | null,
   clientId: string,
   ids?: readonly string[],
+  onProgress?: ReconcileProgress,
 ): Promise<ReconcileStats | null> {
+  const tick = async (processed: number, total: number, note?: string) => {
+    if (!onProgress) return;
+    try {
+      await onProgress(processed, total, note);
+    } catch {
+      /* commentary, not the work */
+    }
+  };
+
   const client = await clients.findClientDetail(firmId, clientId);
   if (!client) return null;
 
@@ -270,6 +291,15 @@ export async function runEngine(
 
     forAi.push(t);
   }
+
+  const resolvedBeforeAi = transactions.length - forAi.length;
+  await tick(
+    resolvedBeforeAi,
+    transactions.length,
+    forAi.length === 0
+      ? "Coded from rules and Coding Memory"
+      : `${resolvedBeforeAi} coded from rules and Coding Memory, ${forAi.length} to the AI tier`,
+  );
 
   // The AI tier, batched. A refusal or a failure routes the whole batch to
   // review as Unknown — never to a default coding.
@@ -433,6 +463,9 @@ export async function runEngine(
           reviewNote: result.needsReview ? result.reason : undefined,
         });
       }
+
+      const classified = Math.min(i + batch.length, forAi.length);
+      await tick(resolvedBeforeAi + classified, transactions.length, `Coded ${classified} of ${forAi.length} with AI`);
     }
 
     // The reviewer tier. Every coding that passed the gate — the confident
@@ -526,6 +559,12 @@ export async function runEngine(
             decidedAt: stamp(),
           };
         }
+
+        await tick(
+          transactions.length,
+          transactions.length,
+          `Second look: ${Math.min(i + batch.length, toReview.length)} of ${toReview.length} checked`,
+        );
       }
     }
 
