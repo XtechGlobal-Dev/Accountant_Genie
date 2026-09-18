@@ -18,6 +18,8 @@ export interface JournalEntryRow {
   /** Sum of debits — equal to the sum of credits. */
   totalCents: number;
   lineCount: number;
+  /** The posted lines, gross, with the GST snapshot on each. */
+  lines: JournalLineView[];
   /** This entry cancels another. */
   isReversal: boolean;
   /** Set once another entry has reversed this one. */
