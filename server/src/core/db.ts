@@ -34,6 +34,20 @@ function createClient(): PrismaClient {
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    // `maxWait` is Prisma's budget for STARTING a transaction — acquiring the
+    // connection and issuing BEGIN — and defaults to 2s, below what a first
+    // connection to Neon costs. The pool above is allowed 10s; a cold link to
+    // a suspended compute measures around 3s. While the transaction gives up
+    // first that tolerance is unreachable, so any `$transaction` that cannot
+    // reuse a warm connection dies with "Unable to start a transaction in the
+    // given time" — the coding stage of an import, reliably, because pg drops
+    // idle connections after 30s and the stages before it take longer than
+    // that. The two waits are deliberately the same number.
+    //
+    // `timeout` — how long a transaction may RUN, 5s by default — is left
+    // alone. It is a per-call decision, and the reconciliation engine already
+    // sets its own.
+    transactionOptions: { maxWait: CONNECT_TIMEOUT_MS },
   });
 }
 
