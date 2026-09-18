@@ -8,10 +8,14 @@ import { HANDLERS, type JobType } from "./handlers";
  * Background jobs, with every stage persisted.
  *
  * A job is a row first. Enqueueing writes the row (its idempotency key makes
- * a double submit a no-op) and then dispatches it: to BullMQ when
- * `REDIS_URL` is set and a worker is running (`npm run worker`), otherwise to an
- * in-process runner on the next tick — the prototype default, which needs
- * no infrastructure and gives the same stage events.
+ * a double submit a no-op) and then dispatches it, by one of three routes in
+ * this order:
+ *
+ *   BullMQ      `REDIS_URL` is set and a worker is running (`npm run worker`).
+ *   HTTP        A serverless host — Vercel — where a background timer does
+ *               not survive the response. See `runnerUrl` below.
+ *   In-process  A timer on the next tick. The local default: one long-lived
+ *               `next dev` process, no infrastructure, the same stage events.
  *
  * Progress is read from `JobEvent` rows, never from memory, so a person can
  * navigate away and come back to accurate state, and the SSE route can serve
@@ -108,6 +112,53 @@ export async function enqueue(input: EnqueueInput): Promise<{ id: string; existe
   return { id: job.id, existed: false };
 }
 
+/**
+ * The secret the dispatcher signs an HTTP hand-off with and the runner route
+ * checks. `AUTH_SECRET` is the fallback because it is already required, is
+ * already identical across every invocation of one deployment, and never
+ * leaves the server — so the HTTP route needs no new configuration to be
+ * safe. `JOB_RUNNER_SECRET` overrides it when the two should not be the same
+ * value.
+ */
+export function jobRunnerSecret(): string | null {
+  return process.env.JOB_RUNNER_SECRET?.trim() || process.env.AUTH_SECRET?.trim() || null;
+}
+
+/**
+ * Where a job runs when there is no worker and no timer that outlives the
+ * response.
+ *
+ * On Vercel the function that served the upload is frozen the moment its
+ * response ends, so a `setTimeout` job is not merely delayed — it stops
+ * wherever it had got to, mid-stage, with the row left RUNNING. An import
+ * reliably reached "Transactions saved" (fast, still inside the request's
+ * own window) and died in "Coding transactions", which is a minute or more
+ * of AI calls. Observed, not theorised.
+ *
+ * The fix is to give the job an invocation of its own: POST to a route that
+ * answers immediately and finishes the work under `after()`, with its own
+ * `maxDuration`. `VERCEL_URL` is this exact deployment, so the job runs the
+ * same code that enqueued it; `JOB_RUNNER_URL` overrides for a host that
+ * needs one (a stable domain, a preview that cannot self-call).
+ *
+ * Null on a long-lived host, which is what selects the in-process timer.
+ */
+function runnerUrl(): string | null {
+  const explicit = process.env.JOB_RUNNER_URL?.trim();
+  const host = process.env.VERCEL_URL?.trim() || process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  const base = explicit || (host ? `https://${host}` : null);
+  return base ? `${base.replace(/\/+$/, "")}/api/jobs/run` : null;
+}
+
+/** A job that could not be handed to a runner at all. Visible, not silent. */
+async function markUndispatchable(jobId: string, detail: string): Promise<void> {
+  await report(jobId, "FAILED", { message: `${detail} — fix the configuration and retry` });
+  await db.job.update({
+    where: { id: jobId },
+    data: { status: "DEAD", errorCode: "NOT_DISPATCHED", errorMessage: detail.slice(0, 500), completedAt: new Date() },
+  });
+}
+
 async function dispatch(jobId: string, delayMs: number): Promise<void> {
   const redisUrl = process.env.REDIS_URL?.trim();
   if (redisUrl) {
@@ -117,6 +168,39 @@ async function dispatch(jobId: string, delayMs: number): Promise<void> {
     await queue.close();
     return;
   }
+
+  const url = runnerUrl();
+  if (url) {
+    const secret = jobRunnerSecret();
+    if (!secret) {
+      await markUndispatchable(jobId, "Neither JOB_RUNNER_SECRET nor AUTH_SECRET is set, so this host cannot start a job");
+      return;
+    }
+    // A preview deployment sits behind Vercel Authentication, which would
+    // answer the self-call with a login page rather than the route.
+    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
+    try {
+      // The runner answers before it does the work, so this awaits a
+      // handshake and not a job: the caller is still the upload request.
+      const response = await fetch(url, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          "x-job-secret": secret,
+          ...(bypass ? { "x-vercel-protection-bypass": bypass, "x-vercel-set-bypass-cookie": "false" } : {}),
+        },
+        body: JSON.stringify({ jobId, delayMs }),
+      });
+      if (!response.ok) {
+        await markUndispatchable(jobId, `The job runner at ${url} answered ${response.status}`);
+      }
+    } catch (error) {
+      await markUndispatchable(jobId, `The job runner at ${url} could not be reached: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return;
+  }
+
   // In-process: the same worker code, on this server, after the response.
   setTimeout(() => {
     void runJob(jobId).catch((error: unknown) => {

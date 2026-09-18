@@ -31,8 +31,8 @@ arbitrary: it follows from the fact that an accounting mutation must not be inte
 All three are declared in [`render.yaml`](../render.yaml) and deploy from one Blueprint.
 
 **Why the worker is a separate service.** The in-process job runner in
-`server/src/jobs/queue.ts` runs a job inside the request that started it, so a deploy, a timeout
-or a dropped connection kills it mid-import — half a statement posted, half not. Setting
+`server/src/jobs/queue.ts` runs a job on the process that served the request, so a deploy, a
+timeout or a dropped connection kills it mid-import — half a statement posted, half not. Setting
 `REDIS_URL` flips that module from running jobs inline to enqueueing them, and the worker runs
 them in a process that outlives the request.
 
@@ -41,6 +41,23 @@ function is capped at 300s on Pro and `/api/jobs/[id]/events` streams progress f
 minutes — so the Activity Panel's stream was cut and replayed on every long import. Keeping both
 halves on Render also puts the queue on the private network: `ipAllowList` is empty, and the
 Redis connection string is never exposed to the internet. See §7 for what this costs.
+
+**Running on Vercel instead.** There is no worker there and no process that outlives a
+response, so `server/src/jobs/queue.ts` takes its third route: it POSTs the job id to
+`/api/jobs/run`, which answers immediately and finishes the job under `after()` with its own
+`maxDuration` (300s — the Hobby ceiling and the Pro default). Nothing has to be configured for
+this: the target is `VERCEL_URL` and the call is signed with `AUTH_SECRET`. Two things to know.
+
+- **`S3_BUCKET` is not optional on Vercel.** The upload and the job that reads the file back are
+  now separate invocations, and `getStorage()` refuses local disk in production for exactly this
+  reason. Statements are source documents; a read-only filesystem cannot hold one.
+- **300s bounds one job.** The coding stage is two AI calls over the file, measured at ~80s for
+  31 rows and around three minutes for 187. A statement large enough to exceed the ceiling is
+  cut off mid-stage, and the job sits RUNNING until `reapStaleJobs` marks it retryable at thirty
+  minutes. That is the ceiling Render and the BullMQ worker do not have — it is the reason the
+  deployment moved, and the reason a firm importing a year of statements should be on Render.
+  A preview deployment additionally needs `VERCEL_AUTOMATION_BYPASS_SECRET`, or Vercel
+  Authentication answers the self-call with a login page.
 
 **The one invariant to get right:** `AUTH_SECRET`, `DATABASE_URL` and the `S3_*` variables must
 be *identical* on the web service and the worker. A mismatch does not error — the app writes a

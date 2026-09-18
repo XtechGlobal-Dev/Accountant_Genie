@@ -172,8 +172,12 @@ export async function processImport(
       failedRows: parsed.failed.length > 0 ? asJson(parsed.failed.slice(0, 200)) : undefined,
     });
 
-    await report("RECONCILING", { processed: 0, total: inserted });
-    const stats = await runEngine(firmId, userId, row.bankAccount.clientId);
+    // This import's own rows, and only those: see `listPendingTransactionIds`.
+    const own = (await repo.listPendingTransactionIds(importId)).map((r) => r.id);
+    await report("RECONCILING", { processed: 0, total: own.length });
+    const stats = await runEngine(firmId, userId, row.bankAccount.clientId, own, (processed, total, note) =>
+      report("RECONCILING", { processed, total, message: note }),
+    );
     await report("GST_PROCESSING", { processed: inserted, total: inserted });
 
     await report("FINALIZING");

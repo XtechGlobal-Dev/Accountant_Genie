@@ -38,6 +38,23 @@ export async function insertTransactions(
   return count;
 }
 
+/**
+ * The rows THIS import created that still need coding.
+ *
+ * The coding stage used to be handed the client instead, which meant every
+ * PENDING row the client had — so two statements uploaded together each paid
+ * to classify the other's rows through the AI, then fought over the same rows
+ * inside the persist transaction until one timed out and retried. Scoped to
+ * the import, the two runs never touch. Rows left behind by an earlier failure
+ * are picked up by Reconcile on the client, which is what it is for.
+ */
+export function listPendingTransactionIds(importId: string): Promise<{ id: string }[]> {
+  return db.bankTransaction.findMany({
+    where: { importId, status: "PENDING", excludedAt: null },
+    select: { id: true },
+  });
+}
+
 export function listRecentImportsForFirm(firmId: string, take: number) {
   return db.statementImport.findMany({
     where: { bankAccount: { client: { firmId } } },

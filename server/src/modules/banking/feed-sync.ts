@@ -379,7 +379,9 @@ export async function syncFeedConnection(
     } while (cursor && pagesFetched < MAX_PAGES);
 
     await report("RECONCILING");
-    const stats = await runEngine(firmId, userId, connection.clientId);
+    const stats = await runEngine(firmId, userId, connection.clientId, undefined, (processed, total, note) =>
+      report("RECONCILING", { processed, total, message: note }),
+    );
 
     await db.$transaction(async (tx) => {
       await tx.feedSyncRun.update({

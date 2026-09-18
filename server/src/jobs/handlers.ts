@@ -46,7 +46,9 @@ export const HANDLERS = {
     if (!job.clientId) throw new Error("Reconcile job has no client");
     const ids = parseTransactionIds(job.inputReference);
     await report("RECONCILING", { message: ids ? `Re-coding ${ids.length} transactions` : "Coding everything not yet coded" });
-    const stats = await runEngine(job.firmId, job.createdById, job.clientId, ids);
+    const stats = await runEngine(job.firmId, job.createdById, job.clientId, ids, (processed, total, note) =>
+      report("RECONCILING", { processed, total, message: note }),
+    );
     await report("COMPLETED", { message: JSON.stringify(stats) });
   },
   SYNC_BANK_FEED: async (job, report) => {
